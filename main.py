@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 import sqlite3
 from pathlib import Path
 from datetime import datetime
@@ -173,7 +173,9 @@ def cert(ddt: str):
         </div>
 
     </div>
-
+@app.get("/dhl_logo_transparent.png")
+def logo():
+    return FileResponse("dhl_logo_transparent.png")
     </body>
     </html>
     """
