@@ -3,7 +3,6 @@ from fastapi.responses import HTMLResponse
 
 app = FastAPI()
 
-# POD demo con link PDF
 PODS = [
     {
         "ddt": "803401182",
@@ -17,15 +16,8 @@ PODS = [
         "citta": "NAPOLI",
         "url": "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
     },
-    {
-        "ddt": "802049535",
-        "cliente": "ALSTOM",
-        "citta": "SESTO S.GIOVANNI",
-        "url": "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
-    },
 ]
 
-# DHL certificata demo
 CERTIFICATE = [
     {
         "ddt": "803401182",
@@ -41,14 +33,6 @@ CERTIFICATE = [
         "destinatario": "TRENITALIA NAPOLI",
         "ritiro": "16/04/2026",
         "consegna": "17/04/2026",
-        "esito": "Consegnato"
-    },
-    {
-        "ddt": "802049535",
-        "awb": "8253977777",
-        "destinatario": "ALSTOM SESTO S.GIOVANNI",
-        "ritiro": "10/01/2024",
-        "consegna": "15/01/2024",
         "esito": "Consegnato"
     },
 ]
@@ -78,7 +62,7 @@ def home(q: str = ""):
                 """
 
         for cert in CERTIFICATE:
-            testo = f"{cert['ddt']} {cert['awb']} {cert['destinatario']} {cert['esito']}".lower()
+            testo = f"{cert['ddt']} {cert['awb']} {cert['destinatario']}".lower()
             if q_lower in testo:
                 risultati_cert += f"""
                 <tr>
@@ -88,7 +72,11 @@ def home(q: str = ""):
                     <td>{cert['ritiro']}</td>
                     <td>{cert['consegna']}</td>
                     <td>{cert['esito']}</td>
-                    <td><button disabled>Certificazione PDF</button></td>
+                    <td>
+                        <a href="/cert/{cert['ddt']}">
+                            <button>Apri Certificazione</button>
+                        </a>
+                    </td>
                 </tr>
                 """
 
@@ -111,7 +99,7 @@ def home(q: str = ""):
                 <h1>POD Manager</h1>
 
                 <form>
-                    <input name="q" value="{q}" placeholder="Inserisci DDT, AWB, cliente o città">
+                    <input name="q" value="{q}" placeholder="Inserisci DDT o AWB">
                     <button type="submit">Cerca</button>
                 </form>
 
@@ -139,6 +127,39 @@ def home(q: str = ""):
                     </tr>
                     {risultati_cert}
                 </table>
+            </div>
+        </body>
+    </html>
+    """
+
+@app.get("/cert/{ddt}", response_class=HTMLResponse)
+def certificazione(ddt: str):
+    cert = next((c for c in CERTIFICATE if c["ddt"] == ddt), None)
+
+    if not cert:
+        return "Certificazione non trovata"
+
+    return f"""
+    <html>
+        <head>
+            <title>Certificazione DHL</title>
+            <style>
+                body {{ font-family: Arial; background:#f4f4f4; padding:40px; }}
+                .box {{ background:white; padding:30px; border-radius:10px; max-width:600px; margin:auto; }}
+                h1 {{ text-align:center; }}
+                p {{ margin:8px 0; }}
+            </style>
+        </head>
+        <body>
+            <div class="box">
+                <h1>Certificazione DHL</h1>
+                <hr>
+                <p><b>DDT:</b> {cert['ddt']}</p>
+                <p><b>AWB:</b> {cert['awb']}</p>
+                <p><b>Destinatario:</b> {cert['destinatario']}</p>
+                <p><b>Data ritiro:</b> {cert['ritiro']}</p>
+                <p><b>Data consegna:</b> {cert['consegna']}</p>
+                <p><b>Esito:</b> {cert['esito']}</p>
             </div>
         </body>
     </html>
