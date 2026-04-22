@@ -3,6 +3,7 @@ from fastapi.responses import HTMLResponse, FileResponse
 import sqlite3
 from pathlib import Path
 from datetime import datetime
+import re
 
 app = FastAPI()
 
@@ -69,6 +70,19 @@ def get_signatory(row):
         return sign
     fallback = clean(row["event_remark"], "")
     return fallback if fallback else "non presente"
+
+
+def clean_address(text):
+    value = clean(text, "")
+    if not value:
+        return "non presente"
+
+    # Rimuove fasce orarie e sequenze orarie appiccicate negli indirizzi
+    value = re.sub(r"\b\d{1,2}:\d{2}\b", "", value)
+    value = re.sub(r"\s*-\s*", " ", value)
+    value = re.sub(r"\s{2,}", " ", value).strip(" .,-")
+
+    return value if value else "non presente"
 
 
 def search_dhl_records(q: str, limit: int = 100):
@@ -174,7 +188,7 @@ def render_cert_html(row):
     awb = clean(row["awb"])
     ddt = clean(row["ddt"])
     cliente = clean(row["cliente"])
-    indirizzo = clean(row["consignee_address"])
+    indirizzo = clean_address(row["consignee_address"])
     cap = clean(row["cap"])
     citta = clean(row["citta"])
     nazione = clean(row["nazione"])
@@ -197,10 +211,12 @@ def render_cert_html(row):
                 margin: 0;
                 color: #111;
             }}
+
             .top-actions {{
-                max-width: 1080px;
+                max-width: 1120px;
                 margin: 0 auto 16px auto;
             }}
+
             .back-btn {{
                 display: inline-block;
                 background: #d40511;
@@ -210,34 +226,41 @@ def render_cert_html(row):
                 border-radius: 10px;
                 font-weight: 700;
                 font-size: 15px;
+                box-shadow: 0 2px 6px rgba(0,0,0,0.12);
             }}
+
             .sheet {{
                 background: white;
-                max-width: 1080px;
+                max-width: 1120px;
                 margin: 0 auto;
-                border-radius: 10px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+                border-radius: 12px;
+                box-shadow: 0 2px 12px rgba(0,0,0,0.08);
                 overflow: hidden;
             }}
+
             .header {{
                 background: #ffcc00;
-                padding: 18px 28px;
+                padding: 18px 26px;
                 border-bottom: 3px solid #d40511;
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
             }}
+
             .header img {{
-                height: 34px;
+                height: 36px;
             }}
+
             .header-right {{
-                font-weight: 700;
-                font-size: 14px;
+                font-weight: 800;
+                font-size: 15px;
                 letter-spacing: 0.2px;
             }}
+
             .content {{
-                padding: 34px 48px 36px 48px;
+                padding: 34px 48px 40px 48px;
             }}
+
             .title {{
                 text-align: center;
                 font-size: 34px;
@@ -245,60 +268,110 @@ def render_cert_html(row):
                 margin: 0 0 8px 0;
                 letter-spacing: 0.3px;
             }}
+
             .subtitle {{
                 text-align: center;
                 color: #444;
                 font-size: 15px;
                 margin-bottom: 22px;
             }}
+
             .centerblock {{
                 text-align: center;
-                line-height: 1.6;
+                line-height: 1.65;
                 margin-bottom: 28px;
                 font-size: 18px;
             }}
+
             .rule {{
-                border-top: 1px solid #cfcfcf;
-                margin: 22px 0 24px 0;
+                border-top: 1px solid #d3d3d3;
+                margin: 24px 0;
             }}
-            .columns-head {{
+
+            .grid {{
                 display: grid;
                 grid-template-columns: 1fr 1fr;
-                gap: 30px;
-                font-size: 19px;
-                font-weight: 700;
-                margin-bottom: 14px;
+                gap: 56px;
+                margin-bottom: 22px;
             }}
+
+            .col {{
+                min-width: 0;
+            }}
+
             .section-title {{
-                font-size: 22px;
+                font-size: 24px;
                 font-weight: 800;
                 margin-bottom: 18px;
             }}
-            .rows {{
-                max-width: 760px;
-            }}
+
             .line {{
                 margin: 10px 0;
-                font-size: 17px;
+                font-size: 16px;
                 line-height: 1.5;
             }}
+
             .line b {{
                 display: inline-block;
-                min-width: 190px;
+                min-width: 170px;
                 font-weight: 700;
             }}
-            .spacer {{
-                height: 10px;
+
+            .shipment-title {{
+                font-size: 24px;
+                font-weight: 800;
+                margin: 6px 0 18px 0;
             }}
+
+            .rows {{
+                max-width: 820px;
+            }}
+
+            .rows .line b {{
+                min-width: 190px;
+            }}
+
+            .badge {{
+                display: inline-block;
+                background: #eef7ee;
+                color: #1f6f2f;
+                border: 1px solid #cfe6cf;
+                border-radius: 999px;
+                padding: 5px 12px;
+                font-size: 13px;
+                font-weight: 700;
+                margin-left: 8px;
+                vertical-align: middle;
+            }}
+
             .small {{
                 font-size: 12px;
                 color: #444;
-                line-height: 1.5;
+                line-height: 1.55;
             }}
+
             .note-title {{
                 font-weight: 700;
                 font-size: 14px;
-                margin: 14px 0 8px 0;
+                margin: 16px 0 8px 0;
+            }}
+
+            @media (max-width: 900px) {{
+                .content {{
+                    padding: 28px 24px 30px 24px;
+                }}
+
+                .grid {{
+                    grid-template-columns: 1fr;
+                    gap: 18px;
+                }}
+
+                .line b,
+                .rows .line b {{
+                    display: block;
+                    min-width: 0;
+                    margin-bottom: 2px;
+                }}
             }}
         </style>
     </head>
@@ -324,29 +397,32 @@ def render_cert_html(row):
 
                 <div class="rule"></div>
 
-                <div class="columns-head">
-                    <div>Consegna</div>
-                    <div>Destinatario</div>
+                <div class="grid">
+                    <div class="col">
+                        <div class="section-title">Consegna</div>
+
+                        <div class="line"><b>Stato consegna</b> {esito}<span class="badge">Consegnato</span></div>
+                        <div class="line"><b>Ricevuto da</b> {firma}</div>
+                        <div class="line"><b>Data consegna</b> {consegna}</div>
+                        <div class="line"><b>Ora consegna</b> {ora}</div>
+                        <div class="line"><b>Firmatario</b> {firma}</div>
+                    </div>
+
+                    <div class="col">
+                        <div class="section-title">Destinatario</div>
+
+                        <div class="line"><b>Nome</b> {cliente}</div>
+                        <div class="line"><b>Indirizzo</b> {indirizzo}</div>
+                        <div class="line"><b>CAP / Città</b> {cap} / {citta}</div>
+                        <div class="line"><b>Nazione</b> {nazione}</div>
+                    </div>
                 </div>
 
-                <div class="section-title">Dati spedizione</div>
+                <div class="rule"></div>
+
+                <div class="shipment-title">Dati spedizione</div>
 
                 <div class="rows">
-                    <div class="line"><b>Stato consegna</b> {esito}</div>
-                    <div class="line"><b>Ricevuto da</b> {firma}</div>
-                    <div class="line"><b>Data consegna</b> {consegna}</div>
-                    <div class="line"><b>Ora consegna</b> {ora}</div>
-                    <div class="line"><b>Firmatario</b> {firma}</div>
-
-                    <div class="spacer"></div>
-
-                    <div class="line"><b>Nome</b> {cliente}</div>
-                    <div class="line"><b>Indirizzo</b> {indirizzo}</div>
-                    <div class="line"><b>CAP / Città</b> {cap} / {citta}</div>
-                    <div class="line"><b>Nazione</b> {nazione}</div>
-
-                    <div class="spacer"></div>
-
                     <div class="line"><b>AWB</b> {awb}</div>
                     <div class="line"><b>DDT</b> {ddt}</div>
                     <div class="line"><b>Riferimento mittente</b> {ddt}</div>
@@ -420,6 +496,7 @@ def home(q: str = ""):
                     background: #f4f4f4;
                     padding: 40px;
                 }}
+
                 .box {{
                     background: white;
                     padding: 20px;
@@ -428,26 +505,32 @@ def home(q: str = ""):
                     margin: auto;
                     box-shadow: 0 2px 10px rgba(0,0,0,0.08);
                 }}
+
                 input {{
                     width: 80%;
                     padding: 10px;
                 }}
+
                 button {{
                     padding: 10px;
                 }}
+
                 table {{
                     width: 100%;
                     margin-top: 20px;
                     border-collapse: collapse;
                 }}
+
                 td, th {{
                     border-bottom: 1px solid #ccc;
                     padding: 8px;
                     text-align: left;
                 }}
+
                 h2 {{
                     margin-top: 40px;
                 }}
+
                 .note {{
                     color: #666;
                     font-size: 13px;
