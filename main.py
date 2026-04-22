@@ -1,13 +1,28 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 app = FastAPI()
 
-# dati finti (demo)
+# dati demo con link PDF
 PODS = [
-    {"ddt": "803401182", "cliente": "ALSTOM", "citta": "VADO LIGURE"},
-    {"ddt": "803414507", "cliente": "TRENITALIA", "citta": "NAPOLI"},
-    {"ddt": "802049535", "cliente": "ALSTOM", "citta": "SESTO S.GIOVANNI"},
+    {
+        "ddt": "803401182",
+        "cliente": "ALSTOM",
+        "citta": "VADO LIGURE",
+        "url": "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
+    },
+    {
+        "ddt": "803414507",
+        "cliente": "TRENITALIA",
+        "citta": "NAPOLI",
+        "url": "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
+    },
+    {
+        "ddt": "802049535",
+        "cliente": "ALSTOM",
+        "citta": "SESTO S.GIOVANNI",
+        "url": "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
+    },
 ]
 
 @app.get("/", response_class=HTMLResponse)
@@ -22,7 +37,11 @@ def home(q: str = ""):
                     <td>{pod['ddt']}</td>
                     <td>{pod['cliente']}</td>
                     <td>{pod['citta']}</td>
-                    <td><button>Apri POD</button></td>
+                    <td>
+                        <a href="{pod['url']}" target="_blank">
+                            <button>Apri POD</button>
+                        </a>
+                    </td>
                 </tr>
                 """
 
@@ -36,7 +55,7 @@ def home(q: str = ""):
                 input {{ width:80%; padding:10px; }}
                 button {{ padding:10px; }}
                 table {{ width:100%; margin-top:20px; border-collapse: collapse; }}
-                td, th {{ border-bottom:1px solid #ccc; padding:8px; }}
+                td, th {{ border-bottom:1px solid #ccc; padding:8px; text-align:left; }}
             </style>
         </head>
         <body>
