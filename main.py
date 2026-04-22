@@ -1,57 +1,120 @@
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
+import sqlite3
+from pathlib import Path
 
 app = FastAPI()
 
-PODS = [
-    {
-        "ddt": "803401182",
-        "cliente": "ALSTOM",
-        "citta": "VADO LIGURE",
-        "url": "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
-    },
-    {
-        "ddt": "803414507",
-        "cliente": "TRENITALIA",
-        "citta": "NAPOLI",
-        "url": "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
-    }
-]
+DB_PATH = Path("data/historic_dhl.db")
 
-CERTIFICATE = [
-    {
-        "ddt": "803128294",
-        "awb": "7021037354",
-        "nome": "ALSTOM SERVICES ITALIA SPA",
-        "indirizzo": "VIA DANDALO 18/C IMC",
-        "citta": "TREVISO",
-        "cap": "31100",
-        "nazione": "ITALY",
-        "ritiro": "07/10/2025",
-        "consegna": "08/10/2025",
-        "ora": "10:11",
-        "firmatario": "Roberto fantin",
-        "esito": "Consegna avvenuta",
-        "destinatario": "ALSTOM VADO LIGURE"
-    },
-    {
-        "ddt": "803414507",
-        "awb": "8253987654",
-        "nome": "TRENITALIA SPA",
-        "indirizzo": "NAPOLI CENTRALE",
-        "citta": "NAPOLI",
-        "cap": "80100",
-        "nazione": "ITALY",
-        "ritiro": "16/04/2026",
-        "consegna": "17/04/2026",
-        "ora": "09:45",
-        "firmatario": "Mario Rossi",
-        "esito": "Consegna avvenuta",
-        "destinatario": "TRENITALIA NAPOLI"
-    }
-]
+
+def get_connection():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def search_dhl_records(q: str, limit: int = 100):
+    if not DB_PATH.exists():
+        return [], "Database non trovato: data/historic_dhl.db"
+
+    q = (q or "").strip()
+    if not q:
+        return [], None
+
+    pattern = f"%{q}%"
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    sql = """
+        SELECT
+            ddt,
+            awb,
+            cliente,
+            citta,
+            nazione,
+            cap,
+            data_ritiro,
+            data_consegna,
+            signatory,
+            event_remark,
+            delivery_datetime,
+            source_type
+        FROM pod_records
+        WHERE
+            COALESCE(ddt, '') LIKE ?
+            OR COALESCE(awb, '') LIKE ?
+            OR COALESCE(cliente, '') LIKE ?
+            OR COALESCE(citta, '') LIKE ?
+            OR COALESCE(signatory, '') LIKE ?
+            OR COALESCE(event_remark, '') LIKE ?
+        ORDER BY
+            CASE
+                WHEN COALESCE(ddt, '') = ? THEN 0
+                WHEN COALESCE(awb, '') = ? THEN 1
+                ELSE 2
+            END,
+            COALESCE(data_consegna, '') DESC
+        LIMIT ?
+    """
+
+    rows = cur.execute(
+        sql,
+        (pattern, pattern, pattern, pattern, pattern, pattern, q, q, limit)
+    ).fetchall()
+
+    conn.close()
+    return rows, None
+
+
+def get_record_by_ddt(ddt: str):
+    if not DB_PATH.exists():
+        return None
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    row = cur.execute(
+        """
+        SELECT
+            ddt,
+            awb,
+            cliente,
+            citta,
+            nazione,
+            cap,
+            data_ritiro,
+            data_consegna,
+            signatory,
+            event_remark,
+            delivery_datetime,
+            source_type
+        FROM pod_records
+        WHERE ddt = ?
+        LIMIT 1
+        """,
+        (ddt,)
+    ).fetchone()
+
+    conn.close()
+    return row
+
 
 def render_cert_html(cert):
+    firmatario = cert["signatory"] or "non presente"
+    esito = cert["event_remark"] or "Consegna avvenuta"
+    consegna = cert["data_consegna"] or "non presente"
+    ritiro = cert["data_ritiro"] or "non presente"
+    ora = "non presente"
+
+    if cert["delivery_datetime"]:
+        dt = str(cert["delivery_datetime"]).strip()
+        if " " in dt:
+            parts = dt.split(" ")
+            if len(parts) >= 2:
+                ora = parts[1][:5]
+
     return f"""
     <html>
         <head>
@@ -129,32 +192,32 @@ def render_cert_html(cert):
                 <div class="line"></div>
 
                 <div class="section-title">Stato consegna</div>
-                <div class="row"><b>Stato:</b> {cert['esito']}</div>
-                <div class="row"><b>Ricevuto da:</b> {cert['firmatario']}</div>
-                <div class="row"><b>Data consegna:</b> {cert['consegna']}</div>
-                <div class="row"><b>Ora consegna:</b> {cert['ora']}</div>
+                <div class="row"><b>Stato:</b> {esito}</div>
+                <div class="row"><b>Ricevuto da:</b> {firmatario}</div>
+                <div class="row"><b>Data consegna:</b> {consegna}</div>
+                <div class="row"><b>Ora consegna:</b> {ora}</div>
 
                 <div class="line"></div>
 
                 <div class="section-title">Dati spedizione</div>
-                <div class="row"><b>Nome:</b> {cert['nome']}</div>
-                <div class="row"><b>Indirizzo:</b> {cert['indirizzo']}</div>
-                <div class="row"><b>CAP / Città:</b> {cert['cap']} / {cert['citta']}</div>
-                <div class="row"><b>Nazione:</b> {cert['nazione']}</div>
-                <div class="row"><b>AWB:</b> {cert['awb']}</div>
-                <div class="row"><b>DDT:</b> {cert['ddt']}</div>
-                <div class="row"><b>Riferimento mittente:</b> {cert['ddt']}</div>
-                <div class="row"><b>Data ritiro:</b> {cert['ritiro']}</div>
-                <div class="row"><b>Data consegna:</b> {cert['consegna']}</div>
-                <div class="row"><b>Ora consegna:</b> {cert['ora']}</div>
-                <div class="row"><b>Firma:</b> {cert['firmatario']}</div>
-                <div class="row"><b>Esito consegna:</b> {cert['esito']}</div>
+                <div class="row"><b>Nome:</b> {cert["cliente"] or "non presente"}</div>
+                <div class="row"><b>Indirizzo:</b> non presente</div>
+                <div class="row"><b>CAP / Città:</b> {(cert["cap"] or "non presente")} / {(cert["citta"] or "non presente")}</div>
+                <div class="row"><b>Nazione:</b> {cert["nazione"] or "non presente"}</div>
+                <div class="row"><b>AWB:</b> {cert["awb"] or "non presente"}</div>
+                <div class="row"><b>DDT:</b> {cert["ddt"] or "non presente"}</div>
+                <div class="row"><b>Riferimento mittente:</b> {cert["ddt"] or "non presente"}</div>
+                <div class="row"><b>Data ritiro:</b> {ritiro}</div>
+                <div class="row"><b>Data consegna:</b> {consegna}</div>
+                <div class="row"><b>Ora consegna:</b> {ora}</div>
+                <div class="row"><b>Firma:</b> {firmatario}</div>
+                <div class="row"><b>Esito consegna:</b> {esito}</div>
 
                 <div class="line"></div>
 
                 <div class="small">
                     Certificazione riepilogativa derivata da archivio storico DHL. Il presente
-                    documento riporta i dati disponibili nei file certificati DHL.
+                    documento riporta i dati disponibili nei file certificati DHL forniti per il recupero archivio.
                 </div>
 
                 <div class="line"></div>
@@ -167,48 +230,37 @@ def render_cert_html(cert):
     </html>
     """
 
+
 @app.get("/", response_class=HTMLResponse)
 def home(q: str = ""):
-    risultati_pod = ""
+    rows, db_error = search_dhl_records(q)
+
     risultati_cert = ""
+    if q and not db_error:
+        for cert in rows:
+            esito = cert["event_remark"] or "Consegna avvenuta"
+            destinatario = cert["cliente"] or ""
+            risultati_cert += f"""
+            <tr>
+                <td>{cert["ddt"] or ""}</td>
+                <td>{cert["awb"] or ""}</td>
+                <td>{destinatario}</td>
+                <td>{cert["data_ritiro"] or ""}</td>
+                <td>{cert["data_consegna"] or ""}</td>
+                <td>{esito}</td>
+                <td>
+                    <a href="/cert/{cert["ddt"]}">
+                        <button>Apri Certificazione</button>
+                    </a>
+                </td>
+            </tr>
+            """
 
-    if q:
-        q_lower = q.lower()
-
-        for pod in PODS:
-            testo = f"{pod['ddt']} {pod['cliente']} {pod['citta']}".lower()
-            if q_lower in testo:
-                risultati_pod += f"""
-                <tr>
-                    <td>{pod['ddt']}</td>
-                    <td>{pod['cliente']}</td>
-                    <td>{pod['citta']}</td>
-                    <td>
-                        <a href="{pod['url']}" target="_blank">
-                            <button>Apri POD</button>
-                        </a>
-                    </td>
-                </tr>
-                """
-
-        for cert in CERTIFICATE:
-            testo = f"{cert['ddt']} {cert['awb']} {cert['destinatario']} {cert['esito']}".lower()
-            if q_lower in testo:
-                risultati_cert += f"""
-                <tr>
-                    <td>{cert['ddt']}</td>
-                    <td>{cert['awb']}</td>
-                    <td>{cert['destinatario']}</td>
-                    <td>{cert['ritiro']}</td>
-                    <td>{cert['consegna']}</td>
-                    <td>{cert['esito']}</td>
-                    <td>
-                        <a href="/cert/{cert['ddt']}">
-                            <button>Apri Certificazione</button>
-                        </a>
-                    </td>
-                </tr>
-                """
+    messaggio = ""
+    if db_error:
+        messaggio = f"<p style='color:red;'><b>{db_error}</b></p>"
+    elif q and not risultati_cert:
+        messaggio = "<p>Nessun risultato trovato.</p>"
 
     return f"""
     <html>
@@ -248,6 +300,11 @@ def home(q: str = ""):
                 h2 {{
                     margin-top: 40px;
                 }}
+                .note {{
+                    color: #666;
+                    font-size: 13px;
+                    margin-top: 10px;
+                }}
             </style>
         </head>
         <body>
@@ -255,20 +312,15 @@ def home(q: str = ""):
                 <h1>POD Manager</h1>
 
                 <form>
-                    <input name="q" value="{q}" placeholder="Inserisci DDT, AWB, cliente o città">
+                    <input name="q" value="{q}" placeholder="Inserisci DDT, AWB, cliente, città o firmatario">
                     <button type="submit">Cerca</button>
                 </form>
 
-                <h2>POD</h2>
-                <table>
-                    <tr>
-                        <th>DDT</th>
-                        <th>Cliente</th>
-                        <th>Città</th>
-                        <th>POD</th>
-                    </tr>
-                    {risultati_pod}
-                </table>
+                <div class="note">
+                    Ricerca su archivio DHL certificato reale (database SQLite).
+                </div>
+
+                {messaggio}
 
                 <h2>DHL Certificata</h2>
                 <table>
@@ -288,9 +340,10 @@ def home(q: str = ""):
     </html>
     """
 
+
 @app.get("/cert/{ddt}", response_class=HTMLResponse)
 def certificazione(ddt: str):
-    cert = next((c for c in CERTIFICATE if c["ddt"] == ddt), None)
+    cert = get_record_by_ddt(ddt)
 
     if not cert:
         return HTMLResponse("<h1>Certificazione non trovata</h1>", status_code=404)
