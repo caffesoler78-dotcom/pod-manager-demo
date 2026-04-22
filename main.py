@@ -77,7 +77,6 @@ def clean_address(text):
     if not value:
         return "non presente"
 
-    # Rimuove fasce orarie e sequenze orarie appiccicate negli indirizzi
     value = re.sub(r"\b\d{1,2}:\d{2}\b", "", value)
     value = re.sub(r"\s*-\s*", " ", value)
     value = re.sub(r"\s{2,}", " ", value).strip(" .,-")
@@ -240,15 +239,15 @@ def render_cert_html(row):
 
             .header {{
                 background: #ffcc00;
-                padding: 18px 26px;
-                border-bottom: 3px solid #d40511;
+                padding: 16px 28px;
+                border-bottom: 4px solid #d40511;
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
             }}
 
             .header img {{
-                height: 36px;
+                height: 44px;
             }}
 
             .header-right {{
@@ -263,10 +262,10 @@ def render_cert_html(row):
 
             .title {{
                 text-align: center;
-                font-size: 34px;
+                font-size: 36px;
                 font-weight: 800;
                 margin: 0 0 8px 0;
-                letter-spacing: 0.3px;
+                letter-spacing: 0.5px;
             }}
 
             .subtitle {{
@@ -306,14 +305,15 @@ def render_cert_html(row):
             }}
 
             .line {{
-                margin: 10px 0;
-                font-size: 16px;
+                margin: 8px 0;
+                font-size: 15.5px;
                 line-height: 1.5;
             }}
 
             .line b {{
                 display: inline-block;
-                min-width: 170px;
+                min-width: 180px;
+                color: #333;
                 font-weight: 700;
             }}
 
@@ -333,20 +333,20 @@ def render_cert_html(row):
 
             .badge {{
                 display: inline-block;
-                background: #eef7ee;
-                color: #1f6f2f;
-                border: 1px solid #cfe6cf;
-                border-radius: 999px;
-                padding: 5px 12px;
-                font-size: 13px;
+                background: #e6f4ea;
+                color: #137333;
+                border: 1px solid #b7e1cd;
+                border-radius: 6px;
+                padding: 4px 10px;
+                font-size: 12px;
                 font-weight: 700;
-                margin-left: 8px;
+                margin-left: 10px;
                 vertical-align: middle;
             }}
 
             .small {{
                 font-size: 12px;
-                color: #444;
+                color: #555;
                 line-height: 1.55;
             }}
 
