@@ -92,7 +92,6 @@ def clean_cliente(text):
 
     value = re.sub(r"^\d+\s*", "", value)
     value = re.sub(r"\s{2,}", " ", value).strip(" .,-")
-
     return value if value else "non presente"
 
 
@@ -443,7 +442,7 @@ def render_cert_html(row):
                     <div>
                         <div class="section-title">Consegna</div>
 
-                        <div class="line"><b>Stato consegna</b> <span class="badge">Consegnato</span></div>
+                        <div class="line"><b>Stato consegna</b> {data["esito"]}<span class="badge">Consegnato</span></div>
                         <div class="line"><b>Ricevuto da</b> {data["firma"]}</div>
                         <div class="line"><b>Data consegna</b> {data["consegna"]}</div>
                         <div class="line"><b>Ora consegna</b> {data["ora"]}</div>
@@ -604,7 +603,7 @@ def certificazione_pdf(ddt: str):
         c.drawString(x, y_pos, label)
         return draw_wrapped_text(c, value, x + label_w, y_pos, max_w, "Helvetica", 10, 12)
 
-    y1 = draw_label_value(col1_x, y1, "Stato consegna", "Consegnato")
+    y1 = draw_label_value(col1_x, y1, "Stato consegna", data["esito"])
     badge_x = col1_x + 240
     badge_y = col_y_top - 34
     c.setFillColor(green_fill)
@@ -742,13 +741,54 @@ def home(q: str = ""):
                     box-shadow: 0 2px 10px rgba(0,0,0,0.08);
                 }}
 
+                .header {{
+                    background: #ffcc00;
+                    padding: 16px 24px;
+                    border-bottom: 4px solid #d40511;
+                    border-radius: 10px 10px 0 0;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin: -20px -20px 20px -20px;
+                }}
+
+                .header img {{
+                    height: 36px;
+                }}
+
+                .header-right {{
+                    font-weight: 800;
+                    font-size: 15px;
+                }}
+
+                .search-title {{
+                    font-size: 34px;
+                    font-weight: 800;
+                    margin: 0 0 16px 0;
+                }}
+
+                .search-bar {{
+                    display: flex;
+                    gap: 10px;
+                    margin-bottom: 10px;
+                }}
+
                 input {{
-                    width: 80%;
-                    padding: 10px;
+                    flex: 1;
+                    padding: 12px;
+                    font-size: 15px;
+                    border: 1px solid #ccc;
+                    border-radius: 8px;
                 }}
 
                 button {{
-                    padding: 10px;
+                    padding: 12px 16px;
+                    border: 0;
+                    border-radius: 8px;
+                    background: #d40511;
+                    color: white;
+                    font-weight: 700;
+                    cursor: pointer;
                 }}
 
                 table {{
@@ -758,13 +798,15 @@ def home(q: str = ""):
                 }}
 
                 td, th {{
-                    border-bottom: 1px solid #ccc;
-                    padding: 8px;
+                    border-bottom: 1px solid #ddd;
+                    padding: 10px 8px;
                     text-align: left;
+                    font-size: 14px;
                 }}
 
                 h2 {{
-                    margin-top: 40px;
+                    margin-top: 34px;
+                    font-size: 24px;
                 }}
 
                 .note {{
@@ -772,15 +814,33 @@ def home(q: str = ""):
                     font-size: 13px;
                     margin-top: 10px;
                 }}
+
+                .open-btn {{
+                    display: inline-block;
+                    background: #222;
+                    color: white;
+                    text-decoration: none;
+                    padding: 8px 12px;
+                    border-radius: 8px;
+                    font-weight: 700;
+                    font-size: 13px;
+                }}
             </style>
         </head>
         <body>
             <div class="box">
-                <h1>POD Manager</h1>
+                <div class="header">
+                    <img src="/dhl_logo_transparent.png" alt="DHL">
+                    <div class="header-right">POD MANAGER DHL</div>
+                </div>
+
+                <div class="search-title">POD Manager</div>
 
                 <form>
-                    <input name="q" value="{q}" placeholder="Inserisci DDT, AWB, cliente, città o firmatario">
-                    <button type="submit">Cerca</button>
+                    <div class="search-bar">
+                        <input name="q" value="{q}" placeholder="Inserisci DDT, AWB, cliente, città o firmatario">
+                        <button type="submit">Cerca</button>
+                    </div>
                 </form>
 
                 <div class="note">
