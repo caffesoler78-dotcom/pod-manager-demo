@@ -525,9 +525,6 @@ def certificazione_pdf(ddt: str):
 
     yellow = HexColor("#ffcc00")
     red = HexColor("#d40511")
-    green_fill = HexColor("#e6f4ea")
-    green_text = HexColor("#137333")
-    green_border = HexColor("#b7e1cd")
     gray_line = HexColor("#d3d3d3")
     gray_text = HexColor("#555555")
 
@@ -601,23 +598,8 @@ def certificazione_pdf(ddt: str):
         c.drawString(x, y_pos, label)
         return draw_wrapped_text(c, value, x + label_w, y_pos, max_w, "Helvetica", 10, 11)
 
+    # PDF SENZA BADGE
     y1 = draw_label_value(col1_x, y1, "Stato consegna", data["esito"])
-
-    # FIX badge PDF: più a sinistra e leggermente più in basso, così non invade la colonna destra
-    badge_x = col1_x + 185
-    badge_y = col_y_top - 37
-    badge_w = 58
-    badge_h = 15
-
-    c.setFillColor(green_fill)
-    c.setStrokeColor(green_border)
-    c.roundRect(badge_x, badge_y, badge_w, badge_h, 4, fill=1, stroke=1)
-
-    c.setFillColor(green_text)
-    c.setFont("Helvetica-Bold", 7.5)
-    c.drawCentredString(badge_x + badge_w / 2, badge_y + 4.5, "Consegnato")
-    c.setFillColor(black)
-
     y1 = draw_label_value(col1_x, y1 - 2, "Ricevuto da", data["firma"])
     y1 = draw_label_value(col1_x, y1 - 2, "Data consegna", data["consegna"])
     y1 = draw_label_value(col1_x, y1 - 2, "Ora consegna", data["ora"])
