@@ -1,10 +1,11 @@
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, FileResponse, Response
+from fastapi.responses import HTMLResponse, FileResponse, Response, RedirectResponse
 import sqlite3
 from pathlib import Path
 from datetime import datetime
 import re
 from io import BytesIO
+import urllib.parse
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.colors import HexColor, black, white
@@ -16,6 +17,9 @@ app = FastAPI()
 DB_PATH = Path("data/historic_dhl.db")
 POD_ATTUALI_DB = Path("data/pod_attuali_index.db")
 LOGO_PATH = Path("dhl_logo_transparent.png")
+
+# Base URL della cartella POD su OneDrive/SharePoint
+BASE_PATH = "https://bcubespa-my.sharepoint.com/personal/patrizia_montebello_bcube_com/Documents/POD 2023/pod"
 
 
 def get_connection():
@@ -202,7 +206,7 @@ def get_row(ddt: str):
     return row
 
 
-def get_pod_reale(ddt: str):
+def get_pod_reale_path(ddt: str):
     if not POD_ATTUALI_DB.exists():
         return None
 
@@ -211,7 +215,7 @@ def get_pod_reale(ddt: str):
 
     row = cur.execute(
         """
-        SELECT full_path
+        SELECT path
         FROM pod_attuali
         WHERE ddt = ?
         LIMIT 1
@@ -229,17 +233,15 @@ def get_pod_reale(ddt: str):
 
 @app.get("/open-pod/{ddt}")
 def open_pod(ddt: str):
-    path = get_pod_reale(ddt)
+    path = get_pod_reale_path(ddt)
 
     if not path:
-        return HTMLResponse("POD non trovata nell'indice attuale", status_code=404)
+        return HTMLResponse("POD non trovata", status_code=404)
 
-    file_path = Path(path)
+    raw_url = f"{BASE_PATH}/{path}"
+    final_url = urllib.parse.quote(raw_url, safe=":/")
 
-    if not file_path.exists():
-        return HTMLResponse("File POD non trovato sul percorso salvato", status_code=404)
-
-    return FileResponse(file_path, filename=file_path.name)
+    return RedirectResponse(final_url)
 
 
 @app.get("/dhl_logo_transparent.png")
@@ -272,7 +274,7 @@ def render_cert_html(row):
     ddt = data["ddt"]
 
     pod_btn = ""
-    if get_pod_reale(ddt):
+    if get_pod_reale_path(ddt):
         pod_btn = f'<a class="pod-btn" href="/open-pod/{ddt}" target="_blank">Apri POD reale</a>'
 
     return f"""
@@ -733,7 +735,7 @@ def home(q: str = ""):
             esito = compute_esito(row)
 
             pod_btn = ""
-            if get_pod_reale(ddt):
+            if get_pod_reale_path(ddt):
                 pod_btn = f'<a class="pod-btn" href="/open-pod/{ddt}" target="_blank">POD</a>'
 
             risultati_cert += f"""
