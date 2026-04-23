@@ -14,6 +14,7 @@ from reportlab.pdfgen import canvas
 app = FastAPI()
 
 DB_PATH = Path("data/historic_dhl.db")
+POD_ATTUALI_DB = Path("pod_attuali_index.db")
 LOGO_PATH = Path("dhl_logo_transparent.png")
 
 
@@ -111,7 +112,7 @@ def clean_address(text):
 
 def search_dhl_records(q: str, limit: int = 100):
     if not DB_PATH.exists():
-        return [], "Database non trovato: data/historic_dhl.db"
+        return [], "Database storico non trovato: data/historic_dhl.db"
 
     q = (q or "").strip()
     if not q:
@@ -201,6 +202,46 @@ def get_row(ddt: str):
     return row
 
 
+def get_pod_reale(ddt: str):
+    if not POD_ATTUALI_DB.exists():
+        return None
+
+    conn = sqlite3.connect(POD_ATTUALI_DB)
+    cur = conn.cursor()
+
+    row = cur.execute(
+        """
+        SELECT full_path
+        FROM pod_attuali
+        WHERE ddt = ?
+        LIMIT 1
+        """,
+        (ddt,)
+    ).fetchone()
+
+    conn.close()
+
+    if row and row[0]:
+        return row[0]
+
+    return None
+
+
+@app.get("/open-pod/{ddt}")
+def open_pod(ddt: str):
+    path = get_pod_reale(ddt)
+
+    if not path:
+        return HTMLResponse("POD non trovata nell'indice attuale", status_code=404)
+
+    file_path = Path(path)
+
+    if not file_path.exists():
+        return HTMLResponse("File POD non trovato sul percorso salvato", status_code=404)
+
+    return FileResponse(file_path, filename=file_path.name)
+
+
 @app.get("/dhl_logo_transparent.png")
 def logo():
     if LOGO_PATH.exists():
@@ -228,6 +269,11 @@ def cert_view_data(row):
 
 def render_cert_html(row):
     data = cert_view_data(row)
+    ddt = data["ddt"]
+
+    pod_btn = ""
+    if get_pod_reale(ddt):
+        pod_btn = f'<a class="pod-btn" href="/open-pod/{ddt}" target="_blank">Apri POD reale</a>'
 
     return f"""
     <html>
@@ -247,9 +293,10 @@ def render_cert_html(row):
                 margin: 0 auto 16px auto;
                 display: flex;
                 gap: 10px;
+                flex-wrap: wrap;
             }}
 
-            .back-btn, .pdf-btn {{
+            .back-btn, .pdf-btn, .pod-btn {{
                 display: inline-block;
                 color: white;
                 text-decoration: none;
@@ -266,6 +313,10 @@ def render_cert_html(row):
 
             .pdf-btn {{
                 background: #444;
+            }}
+
+            .pod-btn {{
+                background: #0b57d0;
             }}
 
             .sheet {{
@@ -408,10 +459,6 @@ def render_cert_html(row):
                     min-width: 0;
                     margin-bottom: 2px;
                 }}
-
-                .top-actions {{
-                    flex-direction: column;
-                }}
             }}
         </style>
     </head>
@@ -419,6 +466,7 @@ def render_cert_html(row):
         <div class="top-actions">
             <a class="back-btn" href="/">← Torna alla ricerca</a>
             <a class="pdf-btn" href="/cert/{data["ddt"]}/pdf">Scarica PDF</a>
+            {pod_btn}
         </div>
 
         <div class="sheet">
@@ -598,7 +646,6 @@ def certificazione_pdf(ddt: str):
         c.drawString(x, y_pos, label)
         return draw_wrapped_text(c, value, x + label_w, y_pos, max_w, "Helvetica", 10, 11)
 
-    # PDF SENZA BADGE
     y1 = draw_label_value(col1_x, y1, "Stato consegna", data["esito"])
     y1 = draw_label_value(col1_x, y1 - 2, "Ricevuto da", data["firma"])
     y1 = draw_label_value(col1_x, y1 - 2, "Data consegna", data["consegna"])
@@ -685,6 +732,10 @@ def home(q: str = ""):
             consegna = fmt_date(row["data_consegna"] or row["delivery_datetime"])
             esito = compute_esito(row)
 
+            pod_btn = ""
+            if get_pod_reale(ddt):
+                pod_btn = f'<a class="pod-btn" href="/open-pod/{ddt}" target="_blank">POD</a>'
+
             risultati_cert += f"""
             <tr>
                 <td>{ddt}</td>
@@ -694,7 +745,8 @@ def home(q: str = ""):
                 <td>{consegna}</td>
                 <td>{esito}</td>
                 <td>
-                    <a class="open-btn" href="/cert/{ddt}">Apri Certificazione</a>
+                    <a class="open-btn" href="/cert/{ddt}">Certificazione</a>
+                    {pod_btn}
                 </td>
             </tr>
             """
@@ -799,15 +851,23 @@ def home(q: str = ""):
                     margin-top: 10px;
                 }}
 
-                .open-btn {{
+                .open-btn, .pod-btn {{
                     display: inline-block;
-                    background: #d40511;
                     color: white;
                     text-decoration: none;
                     padding: 8px 12px;
                     border-radius: 8px;
                     font-weight: 700;
                     font-size: 13px;
+                    margin-right: 6px;
+                }}
+
+                .open-btn {{
+                    background: #d40511;
+                }}
+
+                .pod-btn {{
+                    background: #0b57d0;
                 }}
             </style>
         </head>
@@ -828,12 +888,12 @@ def home(q: str = ""):
                 </form>
 
                 <div class="note">
-                    Ricerca su archivio DHL certificato reale (database SQLite).
+                    Ricerca su archivio DHL certificato reale (database storico) + POD attuali indicizzate.
                 </div>
 
                 {messaggio}
 
-                <h2>DHL Certificata</h2>
+                <h2>DHL Certificata / POD Attuali</h2>
                 <table>
                     <tr>
                         <th>DDT</th>
