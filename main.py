@@ -14,7 +14,7 @@ from reportlab.pdfgen import canvas
 app = FastAPI()
 
 DB_PATH = Path("data/historic_dhl.db")
-POD_ATTUALI_DB = Path("pod_attuali_index.db")
+POD_ATTUALI_DB = Path("data/pod_attuali_index.db")
 LOGO_PATH = Path("dhl_logo_transparent.png")
 
 
