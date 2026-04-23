@@ -265,7 +265,7 @@ def render_cert_html(row):
             }}
 
             .pdf-btn {{
-                background: #222;
+                background: #444;
             }}
 
             .sheet {{
@@ -491,7 +491,7 @@ def render_cert_html(row):
     """
 
 
-def draw_wrapped_text(c, text, x, y, max_width, font_name="Helvetica", font_size=10, leading=13):
+def draw_wrapped_text(c, text, x, y, max_width, font_name="Helvetica", font_size=10, leading=11):
     c.setFont(font_name, font_size)
     words = str(text).split()
     line = ""
@@ -601,11 +601,11 @@ def certificazione_pdf(ddt: str):
     def draw_label_value(x, y_pos, label, value, label_w=110, max_w=col_w - 110):
         c.setFont("Helvetica-Bold", 10)
         c.drawString(x, y_pos, label)
-        return draw_wrapped_text(c, value, x + label_w, y_pos, max_w, "Helvetica", 10, 12)
+        return draw_wrapped_text(c, value, x + label_w, y_pos, max_w, "Helvetica", 10, 11)
 
     y1 = draw_label_value(col1_x, y1, "Stato consegna", data["esito"])
-    badge_x = col1_x + 240
-    badge_y = col_y_top - 34
+    badge_x = col1_x + 260
+    badge_y = col_y_top - 36
     c.setFillColor(green_fill)
     c.setStrokeColor(green_border)
     c.roundRect(badge_x, badge_y, 52, 16, 4, fill=1, stroke=1)
@@ -708,9 +708,7 @@ def home(q: str = ""):
                 <td>{consegna}</td>
                 <td>{esito}</td>
                 <td>
-                    <a href="/cert/{ddt}">
-                        <button>Apri Certificazione</button>
-                    </a>
+                    <a class="open-btn" href="/cert/{ddt}">Apri Certificazione</a>
                 </td>
             </tr>
             """
@@ -817,7 +815,7 @@ def home(q: str = ""):
 
                 .open-btn {{
                     display: inline-block;
-                    background: #222;
+                    background: #d40511;
                     color: white;
                     text-decoration: none;
                     padding: 8px 12px;
