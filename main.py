@@ -16,6 +16,7 @@ app = FastAPI()
 
 DB_STORICO = Path("data/historic_dhl.db")
 DB_DRIVE = Path("data/pod_drive_index.db")
+DB_EXCEL = Path("data/excel_index.db")
 LOGO_PATH = Path("dhl_logo_transparent.png")
 
 
@@ -29,23 +30,30 @@ def clean(x, fallback="non presente"):
 def fmt_date(x):
     if not x:
         return "non presente"
+
     x = str(x).strip()
-    for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%d/%m/%Y"):
+
+    for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%d/%m/%Y", "%d-%m-%Y"):
         try:
             return datetime.strptime(x[:19], fmt).strftime("%d/%m/%Y")
         except Exception:
             pass
+
     return x
 
 
 def fmt_time(x):
     if not x:
         return "non presente"
+
     x = str(x).strip()
+
     if " " in x:
         return x.split(" ")[1][:5]
+
     if ":" in x:
         return x[:5]
+
     return "non presente"
 
 
@@ -58,12 +66,15 @@ def clean_cliente(text):
 
 def clean_address(text):
     value = clean(text, "")
+
     if not value:
         return "non presente"
+
     value = re.sub(r"RICEVIMENTO.*", "", value, flags=re.IGNORECASE)
     value = re.sub(r"\b\d{1,2}[:\.]\d{2}\b", "", value)
     value = re.sub(r"\s*-\s*", " ", value)
     value = re.sub(r"\s{2,}", " ", value).strip(" .,-")
+
     return value if value else "non presente"
 
 
@@ -72,20 +83,6 @@ def to_title_name(text):
     if not value:
         return "non presente"
     return " ".join(p.capitalize() for p in value.split())
-
-
-def compute_esito(row):
-    if row["data_consegna"] or row["delivery_datetime"]:
-        return "Consegna avvenuta"
-    return clean(row["event_remark"])
-
-
-def get_signatory(row):
-    sign = clean(row["signatory"], "")
-    if sign:
-        return to_title_name(sign)
-    remark = clean(row["event_remark"], "")
-    return to_title_name(remark) if remark else "non presente"
 
 
 def get_connection_storico():
@@ -120,6 +117,75 @@ def get_pod_drive(ddt: str):
         "file_id": row[0],
         "file_name": row[1],
         "drive_path": row[2],
+    }
+
+
+def get_excel_data(ddt: str):
+    if not DB_EXCEL.exists():
+        return None
+
+    conn = sqlite3.connect(DB_EXCEL)
+    cur = conn.cursor()
+
+    row = cur.execute(
+        """
+        SELECT ddt, awb, cliente, citta, data_ritiro, data_consegna, esito
+        FROM excel_data
+        WHERE ddt = ?
+        LIMIT 1
+        """,
+        (ddt,)
+    ).fetchone()
+
+    conn.close()
+
+    if not row:
+        return None
+
+    return {
+        "ddt": row[0],
+        "awb": row[1],
+        "cliente": row[2],
+        "citta": row[3],
+        "data_ritiro": row[4],
+        "data_consegna": row[5],
+        "esito": row[6],
+    }
+
+
+def parse_drive_path(drive_path):
+    """
+    Esempio:
+    pod/MASALA MARZO 2026/SPA – ROVERETO/803440854.pdf
+    """
+    if not drive_path:
+        return {
+            "cliente": "non presente",
+            "citta": "non presente",
+            "file_name": "",
+        }
+
+    parts = drive_path.replace("\\", "/").split("/")
+    file_name = parts[-1] if parts else ""
+
+    folder = parts[-2] if len(parts) >= 2 else ""
+
+    cliente = folder
+    citta = ""
+
+    if "–" in folder:
+        a, b = folder.split("–", 1)
+        cliente = a.strip()
+        citta = b.strip()
+    elif "-" in folder:
+        a, b = folder.split("-", 1)
+        cliente = a.strip()
+        citta = b.strip()
+
+    return {
+        "cliente": cliente or "non presente",
+        "citta": citta or "non presente",
+        "file_name": file_name,
     }
 
 
@@ -269,6 +335,21 @@ def get_row(ddt: str):
 
     conn.close()
     return row
+
+
+def compute_esito(row):
+    if row["data_consegna"] or row["delivery_datetime"]:
+        return "Consegna avvenuta"
+    return clean(row["event_remark"])
+
+
+def get_signatory(row):
+    sign = clean(row["signatory"], "")
+    if sign:
+        return to_title_name(sign)
+
+    remark = clean(row["event_remark"], "")
+    return to_title_name(remark) if remark else "non presente"
 
 
 def cert_view_data(row):
@@ -609,6 +690,7 @@ def home(q: str = ""):
 
             awb = clean(row["awb"], "")
             destinatario = clean_cliente(row["cliente"])
+            citta = clean(row["citta"], "-")
             ritiro = fmt_date(row["data_ritiro"])
             consegna = fmt_date(row["data_consegna"] or row["delivery_datetime"])
             esito = compute_esito(row)
@@ -623,6 +705,7 @@ def home(q: str = ""):
                 <td>{ddt}</td>
                 <td>{awb}</td>
                 <td>{destinatario}</td>
+                <td>{citta}</td>
                 <td>{ritiro}</td>
                 <td>{consegna}</td>
                 <td>{esito}</td>
@@ -638,15 +721,26 @@ def home(q: str = ""):
             if ddt in storico_ddt:
                 continue
 
+            excel = get_excel_data(ddt)
+            parsed = parse_drive_path(drive_path)
+
+            awb = clean(excel["awb"], "-") if excel else "-"
+            cliente = clean_cliente(excel["cliente"]) if excel and excel["cliente"] else parsed["cliente"]
+            citta = clean(excel["citta"], parsed["citta"]) if excel else parsed["citta"]
+            ritiro = fmt_date(excel["data_ritiro"]) if excel and excel["data_ritiro"] else "-"
+            consegna = fmt_date(excel["data_consegna"]) if excel and excel["data_consegna"] else "-"
+            esito = clean(excel["esito"], "POD disponibile") if excel else "POD disponibile"
+
             risultati += f"""
             <tr>
                 <td>POD Drive</td>
                 <td>{ddt}</td>
-                <td>-</td>
-                <td>{drive_path}</td>
-                <td>-</td>
-                <td>-</td>
-                <td>POD disponibile</td>
+                <td>{awb}</td>
+                <td>{cliente}</td>
+                <td>{citta}</td>
+                <td>{ritiro}</td>
+                <td>{consegna}</td>
+                <td>{esito}</td>
                 <td>
                     <a class="pod-btn" href="/open-pod/{ddt}" target="_blank">POD</a>
                 </td>
@@ -673,7 +767,7 @@ def home(q: str = ""):
                 background: white;
                 padding: 20px;
                 border-radius: 10px;
-                max-width: 1400px;
+                max-width: 1450px;
                 margin: auto;
                 box-shadow: 0 2px 10px rgba(0,0,0,0.08);
             }}
@@ -723,6 +817,9 @@ def home(q: str = ""):
                 text-align: left;
                 font-size: 14px;
             }}
+            th {{
+                background: #f1f1f1;
+            }}
             .open-btn, .pod-btn {{
                 display: inline-block;
                 color: white;
@@ -757,7 +854,7 @@ def home(q: str = ""):
             </form>
 
             <div class="note">
-                Ricerca su archivio storico DHL + POD reali Drive servite tramite proxy.
+                Ricerca su archivio storico DHL + POD reali Drive + dati Excel.
             </div>
 
             {msg}
@@ -769,7 +866,8 @@ def home(q: str = ""):
                     <th>Fonte</th>
                     <th>DDT</th>
                     <th>AWB</th>
-                    <th>Destinatario / Percorso</th>
+                    <th>Destinatario</th>
+                    <th>Città</th>
                     <th>Ritiro</th>
                     <th>Consegna</th>
                     <th>Esito</th>
@@ -786,6 +884,8 @@ def home(q: str = ""):
 @app.get("/cert/{ddt}", response_class=HTMLResponse)
 def certificazione(ddt: str):
     row = get_row(ddt)
+
     if not row:
         return HTMLResponse("<h1>Certificazione non trovata</h1>", status_code=404)
+
     return render_cert_html(row)
