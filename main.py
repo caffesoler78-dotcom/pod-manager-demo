@@ -1,10 +1,12 @@
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, FileResponse, Response, RedirectResponse
+from fastapi.responses import HTMLResponse, FileResponse, Response
 import sqlite3
 from pathlib import Path
 from datetime import datetime
 import re
 from io import BytesIO
+import urllib.request
+import urllib.error
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.colors import HexColor, black, white
@@ -125,8 +127,32 @@ def open_pod(ddt: str):
     if not pod:
         return HTMLResponse("POD non trovata su Google Drive", status_code=404)
 
-    url = f"https://drive.google.com/file/d/{pod['file_id']}/view"
-    return RedirectResponse(url)
+    file_id = pod["file_id"]
+    file_name = pod["file_name"] or f"{ddt}.pdf"
+
+    drive_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+
+    try:
+        req = urllib.request.Request(
+            drive_url,
+            headers={"User-Agent": "Mozilla/5.0"}
+        )
+
+        response = urllib.request.urlopen(req, timeout=60)
+        pdf_bytes = response.read()
+
+    except urllib.error.HTTPError as e:
+        return HTMLResponse(f"Errore Google Drive HTTP {e.code}", status_code=502)
+    except Exception as e:
+        return HTMLResponse(f"Errore apertura POD: {e}", status_code=502)
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{file_name}"'
+        }
+    )
 
 
 @app.get("/dhl_logo_transparent.png")
@@ -803,7 +829,7 @@ def home(q: str = ""):
             </form>
 
             <div class="note">
-                Ricerca su archivio storico DHL + POD reali su Google Drive.
+                Ricerca su archivio storico DHL + POD reali servite tramite proxy.
             </div>
 
             {msg}
