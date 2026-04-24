@@ -5,7 +5,6 @@ from pathlib import Path
 from datetime import datetime
 import re
 from io import BytesIO
-import urllib.parse
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.colors import HexColor, black, white
@@ -14,87 +13,50 @@ from reportlab.pdfgen import canvas
 
 app = FastAPI()
 
-DB_PATH = Path("data/historic_dhl.db")
-POD_ATTUALI_DB = Path("data/pod_attuali_index.db")
+DB_STORICO = Path("data/historic_dhl.db")
+DB_DRIVE = Path("data/pod_drive_index.db")
 LOGO_PATH = Path("dhl_logo_transparent.png")
-
-# Base URL della cartella POD su OneDrive/SharePoint
-BASE_PATH = "https://bcubespa-my.sharepoint.com/personal/patrizia_montebello_bcube_com/Documents/POD 2023/pod"
-
-
-def get_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
 
 
 def clean(x, fallback="non presente"):
     if x is None:
         return fallback
-    text = str(x).strip()
-    return text if text else fallback
+    x = str(x).strip()
+    return x if x else fallback
 
 
 def fmt_date(x):
     if not x:
         return "non presente"
 
-    text = str(x).strip()
+    x = str(x).strip()
 
     for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%d/%m/%Y"):
         try:
-            dt = datetime.strptime(text[:19], fmt)
-            return dt.strftime("%d/%m/%Y")
+            return datetime.strptime(x[:19], fmt).strftime("%d/%m/%Y")
         except Exception:
             pass
 
-    return text
+    return x
 
 
 def fmt_time(x):
     if not x:
         return "non presente"
 
-    text = str(x).strip()
+    x = str(x).strip()
 
-    if " " in text:
-        try:
-            return text.split(" ")[1][:5]
-        except Exception:
-            return "non presente"
+    if " " in x:
+        return x.split(" ")[1][:5]
 
-    if ":" in text:
-        return text[:5]
+    if ":" in x:
+        return x[:5]
 
     return "non presente"
 
 
-def compute_esito(row):
-    if row["data_consegna"] or row["delivery_datetime"]:
-        return "Consegna avvenuta"
-    return clean(row["event_remark"])
-
-
-def to_title_name(text):
-    value = clean(text, "")
-    if not value:
-        return "non presente"
-    return " ".join(part.capitalize() for part in value.split())
-
-
-def get_signatory(row):
-    sign = clean(row["signatory"], "")
-    if sign:
-        return to_title_name(sign)
-    fallback = clean(row["event_remark"], "")
-    return to_title_name(fallback) if fallback else "non presente"
-
-
 def clean_cliente(text):
     value = clean(text, "")
-    if not value:
-        return "non presente"
-
     value = re.sub(r"^\d+\s*", "", value)
     value = re.sub(r"\s{2,}", " ", value).strip(" .,-")
     return value if value else "non presente"
@@ -102,29 +64,90 @@ def clean_cliente(text):
 
 def clean_address(text):
     value = clean(text, "")
+
     if not value:
         return "non presente"
 
     value = re.sub(r"RICEVIMENTO.*", "", value, flags=re.IGNORECASE)
     value = re.sub(r"\b\d{1,2}[:\.]\d{2}\b", "", value)
-    value = re.sub(r"\b\d{1,2}\b(?=\s+\d{1,2}[:\.]?\d*)", "", value)
     value = re.sub(r"\s*-\s*", " ", value)
     value = re.sub(r"\s{2,}", " ", value).strip(" .,-")
 
     return value if value else "non presente"
 
 
+def to_title_name(text):
+    value = clean(text, "")
+    if not value:
+        return "non presente"
+    return " ".join(p.capitalize() for p in value.split())
+
+
+def get_connection_storico():
+    conn = sqlite3.connect(DB_STORICO)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def get_pod_drive(ddt: str):
+    if not DB_DRIVE.exists():
+        return None
+
+    conn = sqlite3.connect(DB_DRIVE)
+    cur = conn.cursor()
+
+    row = cur.execute(
+        """
+        SELECT file_id, file_name, drive_path
+        FROM pod_drive
+        WHERE ddt = ?
+        LIMIT 1
+        """,
+        (ddt,)
+    ).fetchone()
+
+    conn.close()
+
+    if not row:
+        return None
+
+    return {
+        "file_id": row[0],
+        "file_name": row[1],
+        "drive_path": row[2],
+    }
+
+
+@app.get("/open-pod/{ddt}")
+def open_pod(ddt: str):
+    pod = get_pod_drive(ddt)
+
+    if not pod:
+        return HTMLResponse("POD non trovata su Google Drive", status_code=404)
+
+    url = f"https://drive.google.com/file/d/{pod['file_id']}/view"
+    return RedirectResponse(url)
+
+
+@app.get("/dhl_logo_transparent.png")
+def logo():
+    if LOGO_PATH.exists():
+        return FileResponse(LOGO_PATH)
+    return HTMLResponse("Logo non trovato", status_code=404)
+
+
 def search_dhl_records(q: str, limit: int = 100):
-    if not DB_PATH.exists():
+    if not DB_STORICO.exists():
         return [], "Database storico non trovato: data/historic_dhl.db"
 
     q = (q or "").strip()
+
     if not q:
         return [], None
 
     pattern = f"%{q}%"
 
-    conn = get_connection()
+    conn = get_connection_storico()
     cur = conn.cursor()
 
     rows = cur.execute(
@@ -141,8 +164,7 @@ def search_dhl_records(q: str, limit: int = 100):
             signatory,
             event_remark,
             consignee_address,
-            delivery_datetime,
-            source_type
+            delivery_datetime
         FROM pod_records
         WHERE
             COALESCE(ddt, '') LIKE ?
@@ -151,16 +173,10 @@ def search_dhl_records(q: str, limit: int = 100):
             OR COALESCE(citta, '') LIKE ?
             OR COALESCE(signatory, '') LIKE ?
             OR COALESCE(consignee_address, '') LIKE ?
-        ORDER BY
-            CASE
-                WHEN COALESCE(ddt, '') = ? THEN 0
-                WHEN COALESCE(awb, '') = ? THEN 1
-                ELSE 2
-            END,
-            COALESCE(data_consegna, '') DESC
+        ORDER BY COALESCE(data_consegna, '') DESC
         LIMIT ?
         """,
-        (pattern, pattern, pattern, pattern, pattern, pattern, q, q, limit)
+        (pattern, pattern, pattern, pattern, pattern, pattern, limit)
     ).fetchall()
 
     conn.close()
@@ -168,10 +184,11 @@ def search_dhl_records(q: str, limit: int = 100):
 
 
 def get_row(ddt: str):
-    if not DB_PATH.exists():
+    if not DB_STORICO.exists():
         return None
 
-    conn = get_connection()
+    conn = get_connection_storico()
+
     row = conn.execute(
         """
         SELECT
@@ -181,17 +198,8 @@ def get_row(ddt: str):
             citta,
             nazione,
             cap,
-            file_path,
-            file_name,
-            cliente_origine,
-            data_elaborazione,
-            anno_archivio,
-            mese_archivio,
             data_ritiro,
             data_consegna,
-            transit_days,
-            source_type,
-            source_file,
             signatory,
             event_remark,
             consignee_address,
@@ -202,53 +210,24 @@ def get_row(ddt: str):
         """,
         (ddt,)
     ).fetchone()
+
     conn.close()
     return row
 
 
-def get_pod_reale_path(ddt: str):
-    if not POD_ATTUALI_DB.exists():
-        return None
-
-    conn = sqlite3.connect(POD_ATTUALI_DB)
-    cur = conn.cursor()
-
-    row = cur.execute(
-        """
-        SELECT path
-        FROM pod_attuali
-        WHERE ddt = ?
-        LIMIT 1
-        """,
-        (ddt,)
-    ).fetchone()
-
-    conn.close()
-
-    if row and row[0]:
-        return row[0]
-
-    return None
+def compute_esito(row):
+    if row["data_consegna"] or row["delivery_datetime"]:
+        return "Consegna avvenuta"
+    return clean(row["event_remark"])
 
 
-@app.get("/open-pod/{ddt}")
-def open_pod(ddt: str):
-    path = get_pod_reale_path(ddt)
+def get_signatory(row):
+    sign = clean(row["signatory"], "")
+    if sign:
+        return to_title_name(sign)
 
-    if not path:
-        return HTMLResponse("POD non trovata", status_code=404)
-
-    raw_url = f"{BASE_PATH}/{path}"
-    final_url = urllib.parse.quote(raw_url, safe=":/")
-
-    return RedirectResponse(final_url)
-
-
-@app.get("/dhl_logo_transparent.png")
-def logo():
-    if LOGO_PATH.exists():
-        return FileResponse(LOGO_PATH)
-    return HTMLResponse("Logo non trovato", status_code=404)
+    remark = clean(row["event_remark"], "")
+    return to_title_name(remark) if remark else "non presente"
 
 
 def cert_view_data(row):
@@ -274,19 +253,19 @@ def render_cert_html(row):
     ddt = data["ddt"]
 
     pod_btn = ""
-    if get_pod_reale_path(ddt):
+    if get_pod_drive(ddt):
         pod_btn = f'<a class="pod-btn" href="/open-pod/{ddt}" target="_blank">Apri POD reale</a>'
 
     return f"""
     <html>
     <head>
-        <title>Certificazione DHL {data["ddt"]}</title>
+        <title>Certificazione DHL {ddt}</title>
         <style>
             body {{
                 font-family: Arial, sans-serif;
                 background: #efefef;
-                padding: 32px;
                 margin: 0;
+                padding: 32px;
                 color: #111;
             }}
 
@@ -306,7 +285,6 @@ def render_cert_html(row):
                 border-radius: 10px;
                 font-weight: 700;
                 font-size: 15px;
-                box-shadow: 0 2px 6px rgba(0,0,0,0.12);
             }}
 
             .back-btn {{
@@ -346,7 +324,6 @@ def render_cert_html(row):
             .header-right {{
                 font-weight: 800;
                 font-size: 15px;
-                letter-spacing: 0.2px;
             }}
 
             .content {{
@@ -357,8 +334,7 @@ def render_cert_html(row):
                 text-align: center;
                 font-size: 36px;
                 font-weight: 800;
-                margin: 0 0 8px 0;
-                letter-spacing: 0.5px;
+                margin-bottom: 8px;
             }}
 
             .subtitle {{
@@ -402,22 +378,6 @@ def render_cert_html(row):
             .line b {{
                 display: inline-block;
                 min-width: 180px;
-                color: #333;
-                font-weight: 700;
-            }}
-
-            .shipment-title {{
-                font-size: 24px;
-                font-weight: 800;
-                margin: 6px 0 18px 0;
-            }}
-
-            .rows {{
-                max-width: 820px;
-            }}
-
-            .rows .line b {{
-                min-width: 190px;
             }}
 
             .badge {{
@@ -430,7 +390,6 @@ def render_cert_html(row):
                 font-size: 12px;
                 font-weight: 700;
                 margin-left: 10px;
-                vertical-align: middle;
             }}
 
             .small {{
@@ -444,30 +403,13 @@ def render_cert_html(row):
                 font-size: 14px;
                 margin: 16px 0 8px 0;
             }}
-
-            @media (max-width: 900px) {{
-                .content {{
-                    padding: 28px 24px 30px 24px;
-                }}
-
-                .grid {{
-                    grid-template-columns: 1fr;
-                    gap: 18px;
-                }}
-
-                .line b,
-                .rows .line b {{
-                    display: block;
-                    min-width: 0;
-                    margin-bottom: 2px;
-                }}
-            }}
         </style>
     </head>
+
     <body>
         <div class="top-actions">
             <a class="back-btn" href="/">← Torna alla ricerca</a>
-            <a class="pdf-btn" href="/cert/{data["ddt"]}/pdf">Scarica PDF</a>
+            <a class="pdf-btn" href="/cert/{ddt}/pdf">Scarica PDF</a>
             {pod_btn}
         </div>
 
@@ -509,24 +451,20 @@ def render_cert_html(row):
 
                 <div class="rule"></div>
 
-                <div class="shipment-title">Dati spedizione</div>
-
-                <div class="rows">
-                    <div class="line"><b>AWB</b> {data["awb"]}</div>
-                    <div class="line"><b>DDT</b> {data["ddt"]}</div>
-                    <div class="line"><b>Riferimento mittente</b> {data["ddt"]}</div>
-                    <div class="line"><b>Data ritiro</b> {data["ritiro"]}</div>
-                    <div class="line"><b>Data consegna</b> {data["consegna"]}</div>
-                    <div class="line"><b>Ora consegna</b> {data["ora"]}</div>
-                    <div class="line"><b>Firma</b> {data["firma"]}</div>
-                    <div class="line"><b>Esito consegna</b> {data["esito"]}</div>
-                </div>
+                <div class="section-title">Dati spedizione</div>
+                <div class="line"><b>AWB</b> {data["awb"]}</div>
+                <div class="line"><b>DDT</b> {data["ddt"]}</div>
+                <div class="line"><b>Riferimento mittente</b> {data["ddt"]}</div>
+                <div class="line"><b>Data ritiro</b> {data["ritiro"]}</div>
+                <div class="line"><b>Data consegna</b> {data["consegna"]}</div>
+                <div class="line"><b>Ora consegna</b> {data["ora"]}</div>
+                <div class="line"><b>Firma</b> {data["firma"]}</div>
+                <div class="line"><b>Esito consegna</b> {data["esito"]}</div>
 
                 <div class="rule"></div>
 
                 <div class="small">
-                    Certificazione riepilogativa derivata da archivio storico DHL. Il presente documento riporta i dati disponibili nei file
-                    certificati DHL forniti per il recupero archivio 2024-2025 e non sostituisce una POD PDF originale.
+                    Certificazione riepilogativa derivata da archivio storico DHL. Il presente documento riporta i dati disponibili nei file certificati DHL forniti per il recupero archivio 2024-2025 e non sostituisce una POD PDF originale.
                 </div>
 
                 <div class="note-title">Nota</div>
@@ -564,6 +502,7 @@ def draw_wrapped_text(c, text, x, y, max_width, font_name="Helvetica", font_size
 @app.get("/cert/{ddt}/pdf")
 def certificazione_pdf(ddt: str):
     row = get_row(ddt)
+
     if not row:
         return HTMLResponse("Certificazione non trovata", status_code=404)
 
@@ -581,19 +520,16 @@ def certificazione_pdf(ddt: str):
     card_x = 28
     card_y = 28
     card_w = width - 56
-    card_h = height - 56
+    header_h = 52
 
     c.setFillColor(HexColor("#efefef"))
     c.rect(0, 0, width, height, fill=1, stroke=0)
 
     c.setFillColor(white)
-    c.roundRect(card_x, card_y, card_w, card_h, 10, fill=1, stroke=0)
+    c.roundRect(card_x, card_y, card_w, height - 56, 10, fill=1, stroke=0)
 
-    header_h = 52
     c.setFillColor(yellow)
-    c.roundRect(card_x, height - card_y - header_h, card_w, header_h, 10, fill=1, stroke=0)
-    c.setFillColor(yellow)
-    c.rect(card_x, height - card_y - header_h, card_w, header_h - 10, fill=1, stroke=0)
+    c.rect(card_x, height - card_y - header_h, card_w, header_h, fill=1, stroke=0)
 
     c.setFillColor(red)
     c.rect(card_x, height - card_y - header_h - 3, card_w, 3, fill=1, stroke=0)
@@ -629,82 +565,74 @@ def certificazione_pdf(ddt: str):
     c.line(left, y, right, y)
     y -= 26
 
-    col_gap = 36
-    col_w = (right - left - col_gap) / 2
-    col1_x = left
-    col2_x = left + col_w + col_gap
-    col_y_top = y
-
-    c.setFillColor(black)
     c.setFont("Helvetica-Bold", 18)
-    c.drawString(col1_x, col_y_top, "Consegna")
-    c.drawString(col2_x, col_y_top, "Destinatario")
+    c.drawString(left, y, "Consegna")
+    c.drawString(left + 270, y, "Destinatario")
+    y -= 25
 
-    y1 = col_y_top - 24
-    y2 = col_y_top - 24
-
-    def draw_label_value(x, y_pos, label, value, label_w=110, max_w=col_w - 110):
-        c.setFont("Helvetica-Bold", 10)
+    def lv(x, y_pos, label, value):
+        c.setFont("Helvetica-Bold", 9)
         c.drawString(x, y_pos, label)
-        return draw_wrapped_text(c, value, x + label_w, y_pos, max_w, "Helvetica", 10, 11)
+        c.setFont("Helvetica", 9)
+        c.drawString(x + 95, y_pos, str(value))
 
-    y1 = draw_label_value(col1_x, y1, "Stato consegna", data["esito"])
-    y1 = draw_label_value(col1_x, y1 - 2, "Ricevuto da", data["firma"])
-    y1 = draw_label_value(col1_x, y1 - 2, "Data consegna", data["consegna"])
-    y1 = draw_label_value(col1_x, y1 - 2, "Ora consegna", data["ora"])
-    y1 = draw_label_value(col1_x, y1 - 2, "Firmatario", data["firma"])
+    y_start = y
 
-    y2 = draw_label_value(col2_x, y2, "Nome", data["cliente"], 80, col_w - 80)
-    y2 = draw_label_value(col2_x, y2 - 2, "Indirizzo", data["indirizzo"], 80, col_w - 80)
-    y2 = draw_label_value(col2_x, y2 - 2, "CAP / Città", f"{data['cap']} / {data['citta']}", 80, col_w - 80)
-    y2 = draw_label_value(col2_x, y2 - 2, "Nazione", data["nazione"], 80, col_w - 80)
+    lv(left, y, "Stato", data["esito"])
+    y -= 14
+    lv(left, y, "Ricevuto da", data["firma"])
+    y -= 14
+    lv(left, y, "Data", data["consegna"])
+    y -= 14
+    lv(left, y, "Ora", data["ora"])
 
-    y = min(y1, y2) - 14
+    y = y_start
+    lv(left + 270, y, "Nome", data["cliente"])
+    y -= 14
+    lv(left + 270, y, "Indirizzo", data["indirizzo"])
+    y -= 14
+    lv(left + 270, y, "CAP / Città", f"{data['cap']} / {data['citta']}")
+    y -= 14
+    lv(left + 270, y, "Nazione", data["nazione"])
+
+    y -= 24
     c.setStrokeColor(gray_line)
     c.line(left, y, right, y)
-    y -= 24
+    y -= 25
 
-    c.setFillColor(black)
     c.setFont("Helvetica-Bold", 18)
     c.drawString(left, y, "Dati spedizione")
     y -= 22
 
-    y = draw_label_value(left, y, "AWB", data["awb"], 120, 500)
-    y = draw_label_value(left, y - 2, "DDT", data["ddt"], 120, 500)
-    y = draw_label_value(left, y - 2, "Riferimento mittente", data["ddt"], 120, 500)
-    y = draw_label_value(left, y - 2, "Data ritiro", data["ritiro"], 120, 500)
-    y = draw_label_value(left, y - 2, "Data consegna", data["consegna"], 120, 500)
-    y = draw_label_value(left, y - 2, "Ora consegna", data["ora"], 120, 500)
-    y = draw_label_value(left, y - 2, "Firma", data["firma"], 120, 500)
-    y = draw_label_value(left, y - 2, "Esito consegna", data["esito"], 120, 500)
+    for label, value in [
+        ("AWB", data["awb"]),
+        ("DDT", data["ddt"]),
+        ("Riferimento mittente", data["ddt"]),
+        ("Data ritiro", data["ritiro"]),
+        ("Data consegna", data["consegna"]),
+        ("Ora consegna", data["ora"]),
+        ("Firma", data["firma"]),
+        ("Esito consegna", data["esito"]),
+    ]:
+        lv(left, y, label, value)
+        y -= 14
 
-    y -= 8
+    y -= 10
     c.setStrokeColor(gray_line)
     c.line(left, y, right, y)
     y -= 18
 
     c.setFillColor(gray_text)
-    y = draw_wrapped_text(
+    draw_wrapped_text(
         c,
         "Certificazione riepilogativa derivata da archivio storico DHL. Il presente documento riporta i dati disponibili nei file certificati DHL forniti per il recupero archivio 2024-2025 e non sostituisce una POD PDF originale.",
         left,
         y,
         right - left,
         "Helvetica",
-        8.5,
-        11,
+        8,
+        10,
     )
-
-    c.setFillColor(black)
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(left, y - 4, "Nota")
-    y -= 18
-
-    c.setFillColor(gray_text)
-    c.setFont("Helvetica", 8.5)
-    c.drawString(left, y, f"Generato il {data['generated_on']}")
-    y -= 12
-    c.drawString(left, y, "Sistema: POD Manager DHL")
 
     c.showPage()
     c.save()
@@ -712,11 +640,10 @@ def certificazione_pdf(ddt: str):
     pdf_bytes = buffer.getvalue()
     buffer.close()
 
-    filename = f"certificazione_{data['ddt']}.pdf"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        headers={"Content-Disposition": f'attachment; filename="certificazione_{ddt}.pdf"'}
     )
 
 
@@ -724,7 +651,8 @@ def certificazione_pdf(ddt: str):
 def home(q: str = ""):
     rows, db_error = search_dhl_records(q)
 
-    risultati_cert = ""
+    risultati = ""
+
     if q and not db_error:
         for row in rows:
             ddt = clean(row["ddt"], "")
@@ -735,10 +663,10 @@ def home(q: str = ""):
             esito = compute_esito(row)
 
             pod_btn = ""
-            if get_pod_reale_path(ddt):
+            if get_pod_drive(ddt):
                 pod_btn = f'<a class="pod-btn" href="/open-pod/{ddt}" target="_blank">POD</a>'
 
-            risultati_cert += f"""
+            risultati += f"""
             <tr>
                 <td>{ddt}</td>
                 <td>{awb}</td>
@@ -753,163 +681,149 @@ def home(q: str = ""):
             </tr>
             """
 
-    messaggio = ""
+    msg = ""
     if db_error:
-        messaggio = f"<p style='color:red;'><b>{db_error}</b></p>"
-    elif q and not risultati_cert:
-        messaggio = "<p>Nessun risultato trovato.</p>"
+        msg = f"<p style='color:red'><b>{db_error}</b></p>"
+    elif q and not risultati:
+        msg = "<p>Nessun risultato trovato.</p>"
 
     return f"""
     <html>
-        <head>
-            <title>POD Manager</title>
-            <style>
-                body {{
-                    font-family: Arial, sans-serif;
-                    background: #f4f4f4;
-                    padding: 40px;
-                }}
+    <head>
+        <title>POD Manager</title>
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                background: #f4f4f4;
+                padding: 40px;
+            }}
 
-                .box {{
-                    background: white;
-                    padding: 20px;
-                    border-radius: 10px;
-                    max-width: 1200px;
-                    margin: auto;
-                    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
-                }}
+            .box {{
+                background: white;
+                padding: 20px;
+                border-radius: 10px;
+                max-width: 1300px;
+                margin: auto;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            }}
 
-                .header {{
-                    background: #ffcc00;
-                    padding: 16px 24px;
-                    border-bottom: 4px solid #d40511;
-                    border-radius: 10px 10px 0 0;
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin: -20px -20px 20px -20px;
-                }}
+            .header {{
+                background: #ffcc00;
+                padding: 16px 24px;
+                border-bottom: 4px solid #d40511;
+                border-radius: 10px 10px 0 0;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin: -20px -20px 20px -20px;
+            }}
 
-                .header img {{
-                    height: 36px;
-                }}
+            .header img {{
+                height: 36px;
+            }}
 
-                .header-right {{
-                    font-weight: 800;
-                    font-size: 15px;
-                }}
+            h1 {{
+                font-size: 42px;
+                margin: 20px 0;
+            }}
 
-                .search-title {{
-                    font-size: 34px;
-                    font-weight: 800;
-                    margin: 0 0 16px 0;
-                }}
+            form {{
+                display: flex;
+                gap: 10px;
+            }}
 
-                .search-bar {{
-                    display: flex;
-                    gap: 10px;
-                    margin-bottom: 10px;
-                }}
+            input {{
+                flex: 1;
+                padding: 14px;
+                border: 1px solid #ccc;
+                border-radius: 8px;
+                font-size: 16px;
+            }}
 
-                input {{
-                    flex: 1;
-                    padding: 12px;
-                    font-size: 15px;
-                    border: 1px solid #ccc;
-                    border-radius: 8px;
-                }}
+            button {{
+                background: #d40511;
+                color: white;
+                border: 0;
+                border-radius: 8px;
+                padding: 14px 22px;
+                font-weight: bold;
+                cursor: pointer;
+            }}
 
-                button {{
-                    padding: 12px 16px;
-                    border: 0;
-                    border-radius: 8px;
-                    background: #d40511;
-                    color: white;
-                    font-weight: 700;
-                    cursor: pointer;
-                }}
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 25px;
+            }}
 
-                table {{
-                    width: 100%;
-                    margin-top: 20px;
-                    border-collapse: collapse;
-                }}
+            th, td {{
+                border-bottom: 1px solid #ddd;
+                padding: 12px;
+                text-align: left;
+            }}
 
-                td, th {{
-                    border-bottom: 1px solid #ddd;
-                    padding: 10px 8px;
-                    text-align: left;
-                    font-size: 14px;
-                }}
+            .open-btn, .pod-btn {{
+                display: inline-block;
+                color: white;
+                text-decoration: none;
+                padding: 9px 13px;
+                border-radius: 8px;
+                font-weight: 700;
+                font-size: 13px;
+                margin-right: 6px;
+            }}
 
-                h2 {{
-                    margin-top: 34px;
-                    font-size: 24px;
-                }}
+            .open-btn {{
+                background: #d40511;
+            }}
 
-                .note {{
-                    color: #666;
-                    font-size: 13px;
-                    margin-top: 10px;
-                }}
+            .pod-btn {{
+                background: #0b57d0;
+            }}
 
-                .open-btn, .pod-btn {{
-                    display: inline-block;
-                    color: white;
-                    text-decoration: none;
-                    padding: 8px 12px;
-                    border-radius: 8px;
-                    font-weight: 700;
-                    font-size: 13px;
-                    margin-right: 6px;
-                }}
+            .note {{
+                color: #666;
+                margin-top: 12px;
+            }}
+        </style>
+    </head>
 
-                .open-btn {{
-                    background: #d40511;
-                }}
-
-                .pod-btn {{
-                    background: #0b57d0;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="box">
-                <div class="header">
-                    <img src="/dhl_logo_transparent.png" alt="DHL">
-                    <div class="header-right">POD MANAGER DHL</div>
-                </div>
-
-                <div class="search-title">POD Manager</div>
-
-                <form>
-                    <div class="search-bar">
-                        <input name="q" value="{q}" placeholder="Inserisci DDT, AWB, cliente, città o firmatario">
-                        <button type="submit">Cerca</button>
-                    </div>
-                </form>
-
-                <div class="note">
-                    Ricerca su archivio DHL certificato reale (database storico) + POD attuali indicizzate.
-                </div>
-
-                {messaggio}
-
-                <h2>DHL Certificata / POD Attuali</h2>
-                <table>
-                    <tr>
-                        <th>DDT</th>
-                        <th>AWB</th>
-                        <th>Destinatario</th>
-                        <th>Ritiro</th>
-                        <th>Consegna</th>
-                        <th>Esito</th>
-                        <th>Documento</th>
-                    </tr>
-                    {risultati_cert}
-                </table>
+    <body>
+        <div class="box">
+            <div class="header">
+                <img src="/dhl_logo_transparent.png" alt="DHL">
+                <b>POD MANAGER DHL</b>
             </div>
-        </body>
+
+            <h1>POD Manager</h1>
+
+            <form>
+                <input name="q" value="{q}" placeholder="Inserisci DDT, AWB, cliente, città o firmatario">
+                <button type="submit">Cerca</button>
+            </form>
+
+            <div class="note">
+                Ricerca su archivio storico DHL + POD reali su Google Drive.
+            </div>
+
+            {msg}
+
+            <h2>DHL Certificata / POD Drive</h2>
+
+            <table>
+                <tr>
+                    <th>DDT</th>
+                    <th>AWB</th>
+                    <th>Destinatario</th>
+                    <th>Ritiro</th>
+                    <th>Consegna</th>
+                    <th>Esito</th>
+                    <th>Documento</th>
+                </tr>
+                {risultati}
+            </table>
+        </div>
+    </body>
     </html>
     """
 
