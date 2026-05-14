@@ -7,6 +7,7 @@ import re
 from io import BytesIO
 import urllib.request
 import urllib.error
+import html
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.colors import HexColor, black, white
@@ -27,6 +28,10 @@ def clean(x, fallback="non presente"):
         return fallback
     x = str(x).strip()
     return x if x else fallback
+
+
+def esc(x):
+    return html.escape(clean(x, ""))
 
 
 def fmt_date(x):
@@ -107,7 +112,7 @@ def get_pod_drive(ddt: str):
         WHERE ddt = ?
         LIMIT 1
         """,
-        (ddt,)
+        (ddt,),
     ).fetchone()
 
     conn.close()
@@ -136,7 +141,7 @@ def get_excel_data(ddt: str):
         WHERE ddt = ?
         LIMIT 1
         """,
-        (ddt,)
+        (ddt,),
     ).fetchone()
 
     conn.close()
@@ -165,7 +170,6 @@ def parse_drive_path(drive_path):
 
     parts = drive_path.replace("\\", "/").split("/")
     file_name = parts[-1] if parts else ""
-
     folder = parts[-2] if len(parts) >= 2 else ""
 
     cliente = folder
@@ -200,48 +204,80 @@ def search_drive_records(q: str, limit: int = MAX_RESULTS):
     conn = sqlite3.connect(DB_DRIVE)
     cur = conn.cursor()
 
-    rows = cur.execute(
+    has_excel_table = cur.execute(
         """
-        SELECT
-            p.ddt,
-            p.file_id,
-            p.file_name,
-            p.drive_path,
-            e.awb,
-            e.cliente,
-            e.citta,
-            e.data_ritiro,
-            e.data_consegna,
-            e.esito
-        FROM pod_drive p
-        LEFT JOIN excel_data e
-            ON e.ddt = p.ddt
-        WHERE
-            COALESCE(p.ddt, '') LIKE ?
-            OR COALESCE(p.file_name, '') LIKE ?
-            OR COALESCE(p.drive_path, '') LIKE ?
-            OR COALESCE(e.awb, '') LIKE ?
-            OR COALESCE(e.cliente, '') LIKE ?
-            OR COALESCE(e.citta, '') LIKE ?
-            OR COALESCE(e.data_ritiro, '') LIKE ?
-            OR COALESCE(e.data_consegna, '') LIKE ?
-            OR COALESCE(e.esito, '') LIKE ?
-        ORDER BY COALESCE(e.data_ritiro, '') DESC, p.ddt DESC
-        LIMIT ?
-        """,
-        (
-            pattern,
-            pattern,
-            pattern,
-            pattern,
-            pattern,
-            pattern,
-            pattern,
-            pattern,
-            pattern,
-            limit,
-        )
-    ).fetchall()
+        SELECT name FROM sqlite_master
+        WHERE type='table' AND name='excel_data'
+        """
+    ).fetchone()
+
+    if has_excel_table:
+        rows = cur.execute(
+            """
+            SELECT
+                p.ddt,
+                p.file_id,
+                p.file_name,
+                p.drive_path,
+                e.awb,
+                e.cliente,
+                e.citta,
+                e.data_ritiro,
+                e.data_consegna,
+                e.esito
+            FROM pod_drive p
+            LEFT JOIN excel_data e
+                ON e.ddt = p.ddt
+            WHERE
+                COALESCE(p.ddt, '') LIKE ?
+                OR COALESCE(p.file_name, '') LIKE ?
+                OR COALESCE(p.drive_path, '') LIKE ?
+                OR COALESCE(e.awb, '') LIKE ?
+                OR COALESCE(e.cliente, '') LIKE ?
+                OR COALESCE(e.citta, '') LIKE ?
+                OR COALESCE(e.data_ritiro, '') LIKE ?
+                OR COALESCE(e.data_consegna, '') LIKE ?
+                OR COALESCE(e.esito, '') LIKE ?
+            ORDER BY COALESCE(e.data_ritiro, '') DESC, p.ddt DESC
+            LIMIT ?
+            """,
+            (
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+                limit,
+            ),
+        ).fetchall()
+    else:
+        rows = cur.execute(
+            """
+            SELECT
+                p.ddt,
+                p.file_id,
+                p.file_name,
+                p.drive_path,
+                NULL as awb,
+                NULL as cliente,
+                NULL as citta,
+                NULL as data_ritiro,
+                NULL as data_consegna,
+                NULL as esito
+            FROM pod_drive p
+            WHERE
+                COALESCE(p.ddt, '') LIKE ?
+                OR COALESCE(p.file_name, '') LIKE ?
+                OR COALESCE(p.drive_path, '') LIKE ?
+            ORDER BY p.ddt DESC
+            LIMIT ?
+            """,
+            (pattern, pattern, pattern, limit),
+        ).fetchall()
 
     conn.close()
     return rows
@@ -262,7 +298,7 @@ def open_pod(ddt: str):
     try:
         req = urllib.request.Request(
             drive_url,
-            headers={"User-Agent": "Mozilla/5.0"}
+            headers={"User-Agent": "Mozilla/5.0"},
         )
         response = urllib.request.urlopen(req, timeout=60)
         pdf_bytes = response.read()
@@ -275,7 +311,7 @@ def open_pod(ddt: str):
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{file_name}"'}
+        headers={"Content-Disposition": f'inline; filename="{file_name}"'},
     )
 
 
@@ -325,7 +361,7 @@ def search_dhl_records(q: str, limit: int = MAX_RESULTS):
         ORDER BY COALESCE(data_consegna, '') DESC
         LIMIT ?
         """,
-        (pattern, pattern, pattern, pattern, pattern, pattern, limit)
+        (pattern, pattern, pattern, pattern, pattern, pattern, limit),
     ).fetchall()
 
     conn.close()
@@ -357,7 +393,7 @@ def get_row(ddt: str):
         WHERE ddt = ?
         LIMIT 1
         """,
-        (ddt,)
+        (ddt,),
     ).fetchone()
 
     conn.close()
@@ -403,12 +439,12 @@ def render_cert_html(row):
 
     pod_btn = ""
     if get_pod_drive(ddt):
-        pod_btn = f'<a class="pod-btn" href="/open-pod/{ddt}" target="_blank">Apri POD reale</a>'
+        pod_btn = f'<a class="pod-btn" href="/open-pod/{esc(ddt)}" target="_blank">Apri POD reale</a>'
 
     return f"""
     <html>
     <head>
-        <title>Certificazione DHL {ddt}</title>
+        <title>Certificazione DHL {esc(ddt)}</title>
         <style>
             body {{
                 font-family: Arial, sans-serif;
@@ -522,7 +558,7 @@ def render_cert_html(row):
     <body>
         <div class="top-actions">
             <a class="back-btn" href="/">← Torna alla ricerca</a>
-            <a class="pdf-btn" href="/cert/{ddt}/pdf">Scarica PDF</a>
+            <a class="pdf-btn" href="/cert/{esc(ddt)}/pdf">Scarica PDF</a>
             {pod_btn}
         </div>
 
@@ -537,8 +573,8 @@ def render_cert_html(row):
                 <div class="subtitle">Riepilogo da archivio storico DHL certificato</div>
 
                 <div class="centerblock">
-                    Spedizione AWB <b>{data["awb"]}</b><br>
-                    La spedizione <b>{data["awb"]}</b> risulta consegnata.
+                    Spedizione AWB <b>{esc(data["awb"])}</b><br>
+                    La spedizione <b>{esc(data["awb"])}</b> risulta consegnata.
                 </div>
 
                 <div class="rule"></div>
@@ -546,33 +582,33 @@ def render_cert_html(row):
                 <div class="grid">
                     <div>
                         <div class="section-title">Consegna</div>
-                        <div class="line"><b>Stato consegna</b> {data["esito"]}<span class="badge">Consegnato</span></div>
-                        <div class="line"><b>Ricevuto da</b> {data["firma"]}</div>
-                        <div class="line"><b>Data consegna</b> {data["consegna"]}</div>
-                        <div class="line"><b>Ora consegna</b> {data["ora"]}</div>
-                        <div class="line"><b>Firmatario</b> {data["firma"]}</div>
+                        <div class="line"><b>Stato consegna</b> {esc(data["esito"])}<span class="badge">Consegnato</span></div>
+                        <div class="line"><b>Ricevuto da</b> {esc(data["firma"])}</div>
+                        <div class="line"><b>Data consegna</b> {esc(data["consegna"])}</div>
+                        <div class="line"><b>Ora consegna</b> {esc(data["ora"])}</div>
+                        <div class="line"><b>Firmatario</b> {esc(data["firma"])}</div>
                     </div>
 
                     <div>
                         <div class="section-title">Destinatario</div>
-                        <div class="line"><b>Nome</b> {data["cliente"]}</div>
-                        <div class="line"><b>Indirizzo</b> {data["indirizzo"]}</div>
-                        <div class="line"><b>CAP / Città</b> {data["cap"]} / {data["citta"]}</div>
-                        <div class="line"><b>Nazione</b> {data["nazione"]}</div>
+                        <div class="line"><b>Nome</b> {esc(data["cliente"])}</div>
+                        <div class="line"><b>Indirizzo</b> {esc(data["indirizzo"])}</div>
+                        <div class="line"><b>CAP / Città</b> {esc(data["cap"])} / {esc(data["citta"])}</div>
+                        <div class="line"><b>Nazione</b> {esc(data["nazione"])}</div>
                     </div>
                 </div>
 
                 <div class="rule"></div>
 
                 <div class="section-title">Dati spedizione</div>
-                <div class="line"><b>AWB</b> {data["awb"]}</div>
-                <div class="line"><b>DDT</b> {data["ddt"]}</div>
-                <div class="line"><b>Riferimento mittente</b> {data["ddt"]}</div>
-                <div class="line"><b>Data ritiro</b> {data["ritiro"]}</div>
-                <div class="line"><b>Data consegna</b> {data["consegna"]}</div>
-                <div class="line"><b>Ora consegna</b> {data["ora"]}</div>
-                <div class="line"><b>Firma</b> {data["firma"]}</div>
-                <div class="line"><b>Esito consegna</b> {data["esito"]}</div>
+                <div class="line"><b>AWB</b> {esc(data["awb"])}</div>
+                <div class="line"><b>DDT</b> {esc(data["ddt"])}</div>
+                <div class="line"><b>Riferimento mittente</b> {esc(data["ddt"])}</div>
+                <div class="line"><b>Data ritiro</b> {esc(data["ritiro"])}</div>
+                <div class="line"><b>Data consegna</b> {esc(data["consegna"])}</div>
+                <div class="line"><b>Ora consegna</b> {esc(data["ora"])}</div>
+                <div class="line"><b>Firma</b> {esc(data["firma"])}</div>
+                <div class="line"><b>Esito consegna</b> {esc(data["esito"])}</div>
 
                 <div class="rule"></div>
 
@@ -581,7 +617,7 @@ def render_cert_html(row):
                 </div>
 
                 <div class="note-title">Nota</div>
-                <div class="small">Generato il {data["generated_on"]}</div>
+                <div class="small">Generato il {esc(data["generated_on"])}</div>
                 <div class="small">Sistema: POD Manager DHL</div>
             </div>
         </div>
@@ -649,7 +685,7 @@ def certificazione_pdf(ddt: str):
         c.setFont("Helvetica-Bold", 9)
         c.drawString(x, y_pos, label)
         c.setFont("Helvetica", 9)
-        c.drawString(x + 90, y_pos, str(value))
+        c.drawString(x + 90, y_pos, str(value)[:70])
 
     y0 = y
 
@@ -698,7 +734,7 @@ def certificazione_pdf(ddt: str):
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="certificazione_{ddt}.pdf"'}
+        headers={"Content-Disposition": f'attachment; filename="certificazione_{ddt}.pdf"'},
     )
 
 
@@ -724,20 +760,20 @@ def home(q: str = ""):
 
             pod_btn = ""
             if get_pod_drive(ddt):
-                pod_btn = f'<a class="pod-btn" href="/open-pod/{ddt}" target="_blank">POD</a>'
+                pod_btn = f'<a class="pod-btn" href="/open-pod/{esc(ddt)}" target="_blank">POD</a>'
 
             risultati += f"""
             <tr>
                 <td>DHL Certificata</td>
-                <td>{ddt}</td>
-                <td>{awb}</td>
-                <td>{destinatario}</td>
-                <td>{citta}</td>
-                <td>{ritiro}</td>
-                <td>{consegna}</td>
-                <td>{esito}</td>
+                <td>{esc(ddt)}</td>
+                <td>{esc(awb)}</td>
+                <td>{esc(destinatario)}</td>
+                <td>{esc(citta)}</td>
+                <td>{esc(ritiro)}</td>
+                <td>{esc(consegna)}</td>
+                <td>{esc(esito)}</td>
                 <td>
-                    <a class="open-btn" href="/cert/{ddt}">Certificazione</a>
+                    <a class="open-btn" href="/cert/{esc(ddt)}">Certificazione</a>
                     {pod_btn}
                 </td>
             </tr>
@@ -773,22 +809,22 @@ def home(q: str = ""):
             risultati += f"""
             <tr>
                 <td>POD Drive</td>
-                <td>{ddt}</td>
-                <td>{awb}</td>
-                <td>{cliente}</td>
-                <td>{citta}</td>
-                <td>{ritiro}</td>
-                <td>{consegna}</td>
-                <td>{esito}</td>
+                <td>{esc(ddt)}</td>
+                <td>{esc(awb)}</td>
+                <td>{esc(cliente)}</td>
+                <td>{esc(citta)}</td>
+                <td>{esc(ritiro)}</td>
+                <td>{esc(consegna)}</td>
+                <td>{esc(esito)}</td>
                 <td>
-                    <a class="pod-btn" href="/open-pod/{ddt}" target="_blank">POD</a>
+                    <a class="pod-btn" href="/open-pod/{esc(ddt)}" target="_blank">POD</a>
                 </td>
             </tr>
             """
 
     msg = ""
     if db_error:
-        msg = f"<p style='color:red'><b>{db_error}</b></p>"
+        msg = f"<p style='color:red'><b>{esc(db_error)}</b></p>"
     elif q and not risultati:
         msg = "<p>Nessun risultato trovato.</p>"
     elif q:
@@ -890,7 +926,7 @@ def home(q: str = ""):
             <h1>POD Manager</h1>
 
             <form>
-                <input name="q" value="{q}" placeholder="Cerca DDT, AWB, cliente, città, data o cartella Drive">
+                <input name="q" value="{esc(q)}" placeholder="Cerca DDT, AWB, cliente, città, data o cartella Drive">
                 <button type="submit">Cerca</button>
             </form>
 
