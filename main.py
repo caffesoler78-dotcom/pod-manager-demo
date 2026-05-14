@@ -19,6 +19,8 @@ DB_DRIVE = Path("data/pod_drive_index.db")
 DB_EXCEL = Path("data/excel_index.db")
 LOGO_PATH = Path("dhl_logo_transparent.png")
 
+MAX_RESULTS = 300
+
 
 def clean(x, fallback="non presente"):
     if x is None:
@@ -154,10 +156,6 @@ def get_excel_data(ddt: str):
 
 
 def parse_drive_path(drive_path):
-    """
-    Esempio:
-    pod/MASALA MARZO 2026/SPA – ROVERETO/803440854.pdf
-    """
     if not drive_path:
         return {
             "cliente": "non presente",
@@ -189,7 +187,7 @@ def parse_drive_path(drive_path):
     }
 
 
-def search_drive_records(q: str, limit: int = 100):
+def search_drive_records(q: str, limit: int = MAX_RESULTS):
     if not DB_DRIVE.exists():
         return []
 
@@ -204,16 +202,45 @@ def search_drive_records(q: str, limit: int = 100):
 
     rows = cur.execute(
         """
-        SELECT ddt, file_id, file_name, drive_path
-        FROM pod_drive
+        SELECT
+            p.ddt,
+            p.file_id,
+            p.file_name,
+            p.drive_path,
+            e.awb,
+            e.cliente,
+            e.citta,
+            e.data_ritiro,
+            e.data_consegna,
+            e.esito
+        FROM pod_drive p
+        LEFT JOIN excel_data e
+            ON e.ddt = p.ddt
         WHERE
-            COALESCE(ddt, '') LIKE ?
-            OR COALESCE(file_name, '') LIKE ?
-            OR COALESCE(drive_path, '') LIKE ?
-        ORDER BY ddt
+            COALESCE(p.ddt, '') LIKE ?
+            OR COALESCE(p.file_name, '') LIKE ?
+            OR COALESCE(p.drive_path, '') LIKE ?
+            OR COALESCE(e.awb, '') LIKE ?
+            OR COALESCE(e.cliente, '') LIKE ?
+            OR COALESCE(e.citta, '') LIKE ?
+            OR COALESCE(e.data_ritiro, '') LIKE ?
+            OR COALESCE(e.data_consegna, '') LIKE ?
+            OR COALESCE(e.esito, '') LIKE ?
+        ORDER BY COALESCE(e.data_ritiro, '') DESC, p.ddt DESC
         LIMIT ?
         """,
-        (pattern, pattern, pattern, limit)
+        (
+            pattern,
+            pattern,
+            pattern,
+            pattern,
+            pattern,
+            pattern,
+            pattern,
+            pattern,
+            pattern,
+            limit,
+        )
     ).fetchall()
 
     conn.close()
@@ -259,7 +286,7 @@ def logo():
     return HTMLResponse("Logo non trovato", status_code=404)
 
 
-def search_dhl_records(q: str, limit: int = 100):
+def search_dhl_records(q: str, limit: int = MAX_RESULTS):
     if not DB_STORICO.exists():
         return [], "Database storico non trovato: data/historic_dhl.db"
 
@@ -717,19 +744,31 @@ def home(q: str = ""):
             """
 
     if q:
-        for ddt, file_id, file_name, drive_path in drive_rows:
+        for row in drive_rows:
+            (
+                ddt,
+                file_id,
+                file_name,
+                drive_path,
+                awb,
+                cliente_db,
+                citta_db,
+                data_ritiro,
+                data_consegna,
+                esito_db,
+            ) = row
+
             if ddt in storico_ddt:
                 continue
 
-            excel = get_excel_data(ddt)
             parsed = parse_drive_path(drive_path)
 
-            awb = clean(excel["awb"], "-") if excel else "-"
-            cliente = clean_cliente(excel["cliente"]) if excel and excel["cliente"] else parsed["cliente"]
-            citta = clean(excel["citta"], parsed["citta"]) if excel else parsed["citta"]
-            ritiro = fmt_date(excel["data_ritiro"]) if excel and excel["data_ritiro"] else "-"
-            consegna = fmt_date(excel["data_consegna"]) if excel and excel["data_consegna"] else "-"
-            esito = clean(excel["esito"], "POD disponibile") if excel else "POD disponibile"
+            awb = clean(awb, "-")
+            cliente = clean_cliente(cliente_db) if cliente_db else parsed["cliente"]
+            citta = clean(citta_db, parsed["citta"]) if citta_db else parsed["citta"]
+            ritiro = fmt_date(data_ritiro) if data_ritiro else "-"
+            consegna = fmt_date(data_consegna) if data_consegna else "-"
+            esito = clean(esito_db, "POD disponibile") if esito_db else "POD disponibile"
 
             risultati += f"""
             <tr>
@@ -752,6 +791,8 @@ def home(q: str = ""):
         msg = f"<p style='color:red'><b>{db_error}</b></p>"
     elif q and not risultati:
         msg = "<p>Nessun risultato trovato.</p>"
+    elif q:
+        msg = f"<p class='note'>Risultati limitati ai primi {MAX_RESULTS}. Usa una ricerca più precisa se necessario.</p>"
 
     return f"""
     <html>
@@ -849,12 +890,12 @@ def home(q: str = ""):
             <h1>POD Manager</h1>
 
             <form>
-                <input name="q" value="{q}" placeholder="Inserisci DDT, AWB, cliente, città o firmatario">
+                <input name="q" value="{q}" placeholder="Cerca DDT, AWB, cliente, città, data o cartella Drive">
                 <button type="submit">Cerca</button>
             </form>
 
             <div class="note">
-                Ricerca su archivio storico DHL + POD reali Drive + dati Excel.
+                Ricerca su archivio storico DHL + POD reali Drive + dati operativi.
             </div>
 
             {msg}
